@@ -1,0 +1,66 @@
+$ErrorActionPreference = 'Stop'
+
+Write-Host 'AI Gmail Organizer - Portable Windows build' -ForegroundColor Cyan
+Write-Host 'The result is a folder containing the EXE plus browser/automation runtimes.'
+
+$Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
+Set-Location $Root
+
+$Python = $null
+if ($env:VIRTUAL_ENV -and (Test-Path (Join-Path $env:VIRTUAL_ENV 'Scripts\python.exe'))) {
+    $Python = Join-Path $env:VIRTUAL_ENV 'Scripts\python.exe'
+} elseif (Get-Command python -ErrorAction SilentlyContinue) {
+    $Python = (Get-Command python).Source
+} elseif (Get-Command py -ErrorAction SilentlyContinue) {
+    $Python = (Get-Command py).Source
+}
+
+if (-not $Python) {
+    throw 'Python 3.11+ is required only on the developer build machine. Activate your .venv or install Python, then run this script again.'
+}
+
+Write-Host "Using Python: $Python"
+& $Python -m pip install --upgrade pip
+if ($LASTEXITCODE -ne 0) { throw 'Failed to upgrade pip.' }
+& $Python -m pip install -e .
+if ($LASTEXITCODE -ne 0) { throw 'Failed to install project dependencies.' }
+& $Python -m pip install 'pyinstaller>=6,<7'
+if ($LASTEXITCODE -ne 0) { throw 'Failed to install PyInstaller.' }
+
+$PlaywrightPath = Join-Path $Root '.playwright'
+$env:PLAYWRIGHT_BROWSERS_PATH = $PlaywrightPath
+if (Test-Path $PlaywrightPath) { Remove-Item $PlaywrightPath -Recurse -Force }
+New-Item -ItemType Directory -Path $PlaywrightPath | Out-Null
+
+Write-Host 'Preparing Chromium...'
+& $Python -m playwright install chromium
+if ($LASTEXITCODE -ne 0) { throw 'Failed to prepare Chromium.' }
+
+Write-Host 'Building portable application folder...' -ForegroundColor Cyan
+& $Python -m PyInstaller packaging\AI-Gmail-Organizer.spec --clean --noconfirm
+if ($LASTEXITCODE -ne 0) { throw 'PyInstaller failed.' }
+
+$AppDir = Join-Path $Root 'dist\AI-Gmail-Organizer'
+$Exe = Join-Path $AppDir 'AI-Gmail-Organizer.exe'
+$BrowserDir = Join-Path $AppDir 'playwright'
+
+if (-not (Test-Path $Exe)) { throw "Missing launcher: $Exe" }
+if (-not (Test-Path $BrowserDir)) { throw "Missing bundled browser directory: $BrowserDir" }
+$Chromium = Get-ChildItem -Path $BrowserDir -Recurse -Filter 'chrome.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+if (-not $Chromium) { throw 'No Chromium chrome.exe was found in the packaged browser directory.' }
+
+# Basic packaged-file checks for the Windows automation stack.
+$AutomationMarkers = @('pyautogui', 'pywinauto', 'pyscreeze')
+foreach ($marker in $AutomationMarkers) {
+    $found = Get-ChildItem -Path $AppDir -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match $marker } | Select-Object -First 1
+    if (-not $found) { throw "Expected packaged automation component was not found: $marker" }
+}
+
+Write-Host ''
+Write-Host 'Portable build verified.' -ForegroundColor Green
+Write-Host "Folder: $AppDir"
+Write-Host "Launcher: $Exe"
+Write-Host "Chromium: $($Chromium.FullName)"
+Write-Host ''
+Write-Host 'Distribute the complete AI-Gmail-Organizer folder.'
+Write-Host 'The recipient should launch AI-Gmail-Organizer.exe inside that folder.'
