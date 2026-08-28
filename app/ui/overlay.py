@@ -22,7 +22,7 @@ class OverlayWindow(QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("AI Gmail Organizer v1.1")
+        self.setWindowTitle("AI Gmail Organizer v1.2")
         self.setWindowFlag(Qt.FramelessWindowHint)
         self.setWindowFlag(Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
@@ -44,7 +44,7 @@ class OverlayWindow(QMainWindow):
         panel_layout = QVBoxLayout(panel); panel_layout.setContentsMargins(24, 20, 24, 20); panel_layout.setSpacing(14)
         header = QHBoxLayout(); title_block = QVBoxLayout(); title_block.setSpacing(2)
         title = QLabel("AI Gmail Organizer"); title.setObjectName("title")
-        subtitle = QLabel("v1.1 • Gmail + Windows + local memory"); subtitle.setObjectName("subtitle")
+        subtitle = QLabel("v1.2 • Gmail + Windows + local memory"); subtitle.setObjectName("subtitle")
         title_block.addWidget(title); title_block.addWidget(subtitle)
         self.status = QLabel("● Ready"); self.status.setObjectName("status")
         settings = QPushButton("Settings"); settings.setObjectName("settingsButton"); settings.clicked.connect(self._open_settings)
