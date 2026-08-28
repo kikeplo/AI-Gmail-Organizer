@@ -12,7 +12,9 @@ from app.config.user_settings import (
     install_google_credentials,
     read_config,
     save_api_key,
+    save_base_url,
     save_model,
+    save_provider_name,
 )
 
 
@@ -22,19 +24,27 @@ class SetupDialog(QDialog):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("AI Gmail Organizer — Settings")
-        self.setMinimumWidth(600)
+        self.setMinimumWidth(650)
 
         config = read_config()
         layout = QVBoxLayout(self)
         form = QFormLayout()
 
+        self.provider = QLineEdit(config.get("AI_PROVIDER", ""))
+        self.provider.setPlaceholderText("e.g. OpenAI, Completions.me, Groq, OpenRouter")
+        form.addRow("AI provider", self.provider)
+
         self.api_key = QLineEdit(config.get("OPENAI_API_KEY", ""))
         self.api_key.setEchoMode(QLineEdit.Password)
-        self.api_key.setPlaceholderText("Optional — leave blank to use local command routing")
-        form.addRow("OpenAI API key", self.api_key)
+        self.api_key.setPlaceholderText("API key")
+        form.addRow("API key", self.api_key)
+
+        self.base_url = QLineEdit(config.get("OPENAI_BASE_URL", ""))
+        self.base_url.setPlaceholderText("Optional — e.g. https://api.example.com/v1")
+        form.addRow("API base URL", self.base_url)
 
         self.model = QLineEdit(config.get("OPENAI_MODEL", ""))
-        self.model.setPlaceholderText("Optional model name")
+        self.model.setPlaceholderText("Model name required by the provider")
         form.addRow("AI model", self.model)
 
         oauth_row = QHBoxLayout()
@@ -48,7 +58,7 @@ class SetupDialog(QDialog):
         form.addRow("Gmail OAuth", oauth_row)
         layout.addLayout(form)
 
-        note = QLineEdit("Settings are stored for this Windows user. They are not part of the GitHub project.")
+        note = QLineEdit("Use any OpenAI-compatible provider by entering its API key, base URL, and model. Settings are stored for this Windows user and are not committed to GitHub.")
         note.setReadOnly(True)
         note.setObjectName("settingsNote")
         layout.addWidget(note)
@@ -87,7 +97,9 @@ class SetupDialog(QDialog):
 
     def _save(self) -> None:
         try:
+            save_provider_name(self.provider.text())
             save_api_key(self.api_key.text())
+            save_base_url(self.base_url.text())
             save_model(self.model.text())
         except OSError as exc:
             QMessageBox.critical(self, "Could not save settings", str(exc))
