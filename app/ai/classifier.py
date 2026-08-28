@@ -1,4 +1,4 @@
-"""Inbox classification and summary services for v0.4."""
+"""Inbox classification and summary services."""
 
 from __future__ import annotations
 
@@ -19,16 +19,16 @@ class ClassifiedMessage:
 
 
 class InboxClassifier:
-    """Classify inbox messages with an LLM when configured, or safe local rules."""
+    """Classify inbox messages with an LLM when configured, or with local rules."""
 
     def __init__(self) -> None:
-        self.model = os.getenv("OPENAI_MODEL", "gpt-5.6-luna")
+        self.model = os.getenv("OPENAI_MODEL")
         self.api_key = os.getenv("OPENAI_API_KEY")
 
     def classify(self, messages: list[GmailMessage]) -> list[ClassifiedMessage]:
         if not messages:
             return []
-        if self.api_key:
+        if self.api_key and self.model:
             try:
                 return self._classify_with_ai(messages)
             except Exception:
@@ -53,6 +53,7 @@ class InboxClassifier:
 
     def _classify_with_ai(self, messages: list[GmailMessage]) -> list[ClassifiedMessage]:
         from openai import OpenAI
+        import json
 
         payload = [
             {
@@ -75,10 +76,9 @@ class InboxClassifier:
                         "an array of objects with id, category, confidence, reason."
                     ),
                 },
-                {"role": "user", "content": str(payload)},
+                {"role": "user", "content": json.dumps(payload)},
             ],
         )
-        import json
 
         results = {item["id"]: item for item in json.loads(response.output_text)}
         classified: list[ClassifiedMessage] = []
@@ -92,7 +92,7 @@ class InboxClassifier:
                     message=message,
                     category=category,
                     confidence=float(item.get("confidence", 0.5)),
-                    reason=str(item.get("reason", "AI classification")),
+                    reason=str(item.get("reason", "No explanation provided.")),
                 )
             )
         return classified
