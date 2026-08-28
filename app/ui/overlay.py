@@ -22,7 +22,7 @@ class OverlayWindow(QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("AI Gmail Organizer v1.3")
+        self.setWindowTitle("AI Gmail Organizer v1.4")
         self.setWindowFlag(Qt.FramelessWindowHint)
         self.setWindowFlag(Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
@@ -35,7 +35,7 @@ class OverlayWindow(QMainWindow):
         self._thread: QThread | None = None
         self._worker: CommandWorker | None = None
         self._build_ui()
-        self._add_message("assistant", "AI Gmail Organizer is ready. Ask me to organize Gmail, inspect the active window, or run a supported workflow.")
+        self._add_message("assistant", "AI Gmail Organizer is ready. Ask me to organize Gmail, inspect or control your Windows desktop, or run a supported workflow.")
 
     def _build_ui(self) -> None:
         root = QWidget(); root.setObjectName("root"); self.setCentralWidget(root)
@@ -44,7 +44,7 @@ class OverlayWindow(QMainWindow):
         panel_layout = QVBoxLayout(panel); panel_layout.setContentsMargins(24, 20, 24, 20); panel_layout.setSpacing(14)
         header = QHBoxLayout(); title_block = QVBoxLayout(); title_block.setSpacing(2)
         title = QLabel("AI Gmail Organizer"); title.setObjectName("title")
-        subtitle = QLabel("v1.3 • Gmail + Windows + local memory"); subtitle.setObjectName("subtitle")
+        subtitle = QLabel("v1.4 • Gmail + Windows + local memory"); subtitle.setObjectName("subtitle")
         title_block.addWidget(title); title_block.addWidget(subtitle)
         self.status = QLabel("● Ready"); self.status.setObjectName("status")
         settings = QPushButton("Settings"); settings.setObjectName("settingsButton"); settings.clicked.connect(self._open_settings)
@@ -100,7 +100,7 @@ class OverlayWindow(QMainWindow):
         layout.addLayout(quick_row)
         self.messages = QVBoxLayout(); self.messages.setSpacing(10); self.messages.addStretch()
         host = QWidget(); host.setLayout(self.messages); self.scroll = QScrollArea(); self.scroll.setWidget(host); self.scroll.setWidgetResizable(True); self.scroll.setFrameShape(QFrame.NoFrame); self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff); self.scroll.setObjectName("messagesScroll"); layout.addWidget(self.scroll, 1)
-        self.hint = QLabel("Gmail changes require confirmation. Local memory stays on this machine."); self.hint.setObjectName("hint"); layout.addWidget(self.hint)
+        self.hint = QLabel("Gmail changes require confirmation. Desktop clicks and typing operate only on your local Windows session."); self.hint.setObjectName("hint"); layout.addWidget(self.hint)
         input_row = QHBoxLayout(); self.command_input = QLineEdit(); self.command_input.setPlaceholderText("Ask for a Gmail, desktop, or memory workflow…"); self.command_input.setClearButtonEnabled(True)
         self.send_button = QPushButton("Send"); self.send_button.setObjectName("sendButton"); self.send_button.setMinimumWidth(94); self.send_button.clicked.connect(self._on_send); self.command_input.returnPressed.connect(self._on_send); input_row.addWidget(self.command_input); input_row.addWidget(self.send_button); layout.addLayout(input_row)
         return page
@@ -142,7 +142,7 @@ class OverlayWindow(QMainWindow):
 
     def _on_worker_failed(self, message: str) -> None: self._add_message("assistant", f"The command could not be completed.\n\n{message}"); self._set_ready_state()
 
-    def _set_ready_state(self) -> None: self.send_button.setEnabled(True); self.send_button.setText("Send"); self.status.setText("● Ready"); self.hint.setText("Gmail changes require confirmation. Local memory stays on this machine.")
+    def _set_ready_state(self) -> None: self.send_button.setEnabled(True); self.send_button.setText("Send"); self.status.setText("● Ready"); self.hint.setText("Gmail changes require confirmation. Desktop clicks and typing operate only on your local Windows session.")
 
     def _cleanup_worker(self) -> None:
         if self._worker is not None: self._worker.deleteLater()
