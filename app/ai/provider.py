@@ -44,16 +44,28 @@ class AIProvider:
     def _base(self) -> str:
         base = self.base_url.rstrip("/")
         protocol = self._protocol()
+
+        if base.endswith("/chat/completions"):
+            base = base[: -len("/chat/completions")].rstrip("/")
+
         if protocol == "gemini":
-            if "/openai" not in base:
+            if not base:
+                base = "https://generativelanguage.googleapis.com/v1beta/openai"
+            elif "/openai" not in base:
                 if base.endswith("/v1beta") or base.endswith("/v1"):
                     base += "/openai"
                 else:
                     base += "/v1beta/openai"
             return base.rstrip("/")
+
         if protocol == "anthropic":
-            return base or "https://api.anthropic.com/v1"
-        return base
+            return (base or "https://api.anthropic.com/v1").rstrip("/")
+
+        if not base and "ollama" in self.provider.lower():
+            return "http://localhost:11434/v1"
+        if not base:
+            return "https://api.openai.com/v1"
+        return base.rstrip("/")
 
     def _headers(self, json_body: bool = False) -> dict[str, str]:
         headers = {"Accept": "application/json"}
@@ -65,6 +77,8 @@ class AIProvider:
                 headers["anthropic-version"] = "2023-06-01"
             else:
                 headers["Authorization"] = f"Bearer {self.api_key}"
+        if self._protocol() == "gemini":
+            headers["x-goog-api-client"] = "ai-gmail-organizer/1.0"
         return headers
 
     def _request(self, method: str, url: str, body: dict | None = None) -> dict:
@@ -83,30 +97,21 @@ class AIProvider:
             raise AIProviderError("The AI provider returned invalid JSON.") from exc
 
     def list_models(self) -> list[str]:
-        protocol = self._protocol()
-        if protocol in ("gemini", "openai_compatible"):
-            data = self._request("GET", f"{self._base()}/models")
-            models = data.get("data", [])
-            result = []
-            for item in models:
-                model_id = item.get("id") if isinstance(item, dict) else None
-                if model_id:
-                    result.append(str(model_id))
-            if not result:
-                raise AIProviderError("The provider returned no models.")
-            return result
         data = self._request("GET", f"{self._base()}/models")
         models = data.get("data", [])
-        result = [str(item.get("id")) for item in models if isinstance(item, dict) and item.get("id")]
+        result = []
+        for item in models:
+            model_id = item.get("id") if isinstance(item, dict) else None
+            if model_id:
+                result.append(str(model_id))
         if not result:
-            raise AIProviderError("The provider returned no models.")
+            raise AIProviderError("The provider returned no models. This provider may not expose /models; its model must be supplied by the provider or a supported adapter.")
         return result
 
     def resolve_model(self) -> str:
         if self.model:
             return self.model
         models = self.list_models()
-        # Prefer obvious text/chat models when the provider returns many models.
         blocked = ("embedding", "moderation", "image", "audio", "tts", "whisper")
         for model in models:
             if not any(token in model.lower() for token in blocked):
@@ -116,6 +121,7 @@ class AIProvider:
     def chat(self, user_text: str, system_text: str = "") -> str:
         model = self.resolve_model()
         protocol = self._protocol()
+
         if protocol == "anthropic":
             body = {
                 "model": model,
