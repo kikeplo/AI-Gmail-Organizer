@@ -106,41 +106,31 @@ class OverlayWindow(QMainWindow):
         return page
 
     @staticmethod
-    def _clean_assistant_text(text: str) -> str:
-        """Turn common Markdown output into clean, native app text."""
-        cleaned_lines: list[str] = []
-        for raw in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
-            line = raw.strip()
-            if not line:
-                if cleaned_lines and cleaned_lines[-1] != "":
-                    cleaned_lines.append("")
-                continue
-            # Remove horizontal-rule Markdown and heading syntax.
-            if re.fullmatch(r"[-_*]{3,}", line):
-                if cleaned_lines and cleaned_lines[-1] != "":
-                    cleaned_lines.append("")
-                continue
-            line = re.sub(r"^#{1,6}\s+", "", line)
-            # Turn numbered and dash/asterisk lists into clean bullet points.
-            line = re.sub(r"^[-+•]\s+", "• ", line)
-            line = re.sub(r"^\*\s+", "• ", line)
-            line = re.sub(r"^\d+[.)]\s+", "• ", line)
-            # Remove bold/italic/code markers while preserving the actual text.
-            line = line.replace("**", "").replace("__", "")
-            line = re.sub(r"(?<!\w)\*(.*?)\*(?!\w)", r"\1", line)
-            line = re.sub(r"(?<!\w)_(.*?)_(?!\w)", r"\1", line)
-            line = line.replace("`", "")
-            cleaned_lines.append(line)
-        result = "\n".join(cleaned_lines).strip()
-        return re.sub(r"\n{3,}", "\n\n", result)
+    def _clean_ai_text(text: str) -> str:
+        """Convert common Markdown formatting into clean native chat text."""
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+        # Remove horizontal-rule-only lines and heading markers.
+        text = re.sub(r"^\s*([-*_])(?:\s*\1){2,}\s*$", "", text, flags=re.MULTILINE)
+        text = re.sub(r"^\s*#{1,6}\s*", "", text, flags=re.MULTILINE)
+        # Turn Markdown bullets into one consistent native bullet.
+        text = re.sub(r"^\s*[-*+]\s+", "• ", text, flags=re.MULTILINE)
+        # Remove bold/italic markers without removing the actual words.
+        text = text.replace("**", "").replace("__", "")
+        text = re.sub(r"(?<!\w)\*([^\n*]+)\*(?!\w)", r"\1", text)
+        text = re.sub(r"(?<!\w)_([^\n_]+)_(?!\w)", r"\1", text)
+        # Remove inline code fences/backticks.
+        text = text.replace("```", "").replace("`", "")
+        # Normalize excessive blank lines.
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        return text.strip()
 
     def _refresh_dashboard(self, index: int) -> None:
         if index == 1: self.history_view.store = self._memory; self.history_view.refresh()
         elif index == 2: self.usage_view.store = self._memory; self.usage_view.refresh()
 
     def _add_message(self, role: str, text: str) -> None:
-        display_text = self._clean_assistant_text(text) if role == "assistant" else text
-        label = QLabel(display_text); label.setObjectName("messageUser" if role == "user" else "messageAssistant"); label.setWordWrap(True); label.setTextInteractionFlags(Qt.TextSelectableByMouse); label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum); self.messages.insertWidget(self.messages.count() - 1, label); self.scroll.verticalScrollBar().setValue(self.scroll.verticalScrollBar().maximum())
+        label = QLabel(self._clean_ai_text(text) if role == "assistant" else text)
+        label.setObjectName("messageUser" if role == "user" else "messageAssistant"); label.setWordWrap(True); label.setTextInteractionFlags(Qt.TextSelectableByMouse); label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum); self.messages.insertWidget(self.messages.count() - 1, label); self.scroll.verticalScrollBar().setValue(self.scroll.verticalScrollBar().maximum())
 
     def _submit(self, command: str) -> None: self.tabs.setCurrentIndex(0); self.command_input.setText(command); self._on_send()
 
