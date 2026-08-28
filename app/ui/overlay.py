@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from PySide6.QtCore import Qt, QThread
 from PySide6.QtWidgets import (
     QDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox,
@@ -103,12 +105,42 @@ class OverlayWindow(QMainWindow):
         self.send_button = QPushButton("Send"); self.send_button.setObjectName("sendButton"); self.send_button.setMinimumWidth(94); self.send_button.clicked.connect(self._on_send); self.command_input.returnPressed.connect(self._on_send); input_row.addWidget(self.command_input); input_row.addWidget(self.send_button); layout.addLayout(input_row)
         return page
 
+    @staticmethod
+    def _clean_assistant_text(text: str) -> str:
+        """Turn common Markdown output into clean, native app text."""
+        cleaned_lines: list[str] = []
+        for raw in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+            line = raw.strip()
+            if not line:
+                if cleaned_lines and cleaned_lines[-1] != "":
+                    cleaned_lines.append("")
+                continue
+            # Remove horizontal-rule Markdown and heading syntax.
+            if re.fullmatch(r"[-_*]{3,}", line):
+                if cleaned_lines and cleaned_lines[-1] != "":
+                    cleaned_lines.append("")
+                continue
+            line = re.sub(r"^#{1,6}\s+", "", line)
+            # Turn numbered and dash/asterisk lists into clean bullet points.
+            line = re.sub(r"^[-+•]\s+", "• ", line)
+            line = re.sub(r"^\*\s+", "• ", line)
+            line = re.sub(r"^\d+[.)]\s+", "• ", line)
+            # Remove bold/italic/code markers while preserving the actual text.
+            line = line.replace("**", "").replace("__", "")
+            line = re.sub(r"(?<!\w)\*(.*?)\*(?!\w)", r"\1", line)
+            line = re.sub(r"(?<!\w)_(.*?)_(?!\w)", r"\1", line)
+            line = line.replace("`", "")
+            cleaned_lines.append(line)
+        result = "\n".join(cleaned_lines).strip()
+        return re.sub(r"\n{3,}", "\n\n", result)
+
     def _refresh_dashboard(self, index: int) -> None:
         if index == 1: self.history_view.store = self._memory; self.history_view.refresh()
         elif index == 2: self.usage_view.store = self._memory; self.usage_view.refresh()
 
     def _add_message(self, role: str, text: str) -> None:
-        label = QLabel(text); label.setObjectName("messageUser" if role == "user" else "messageAssistant"); label.setWordWrap(True); label.setTextInteractionFlags(Qt.TextSelectableByMouse); label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum); self.messages.insertWidget(self.messages.count() - 1, label); self.scroll.verticalScrollBar().setValue(self.scroll.verticalScrollBar().maximum())
+        display_text = self._clean_assistant_text(text) if role == "assistant" else text
+        label = QLabel(display_text); label.setObjectName("messageUser" if role == "user" else "messageAssistant"); label.setWordWrap(True); label.setTextInteractionFlags(Qt.TextSelectableByMouse); label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum); self.messages.insertWidget(self.messages.count() - 1, label); self.scroll.verticalScrollBar().setValue(self.scroll.verticalScrollBar().maximum())
 
     def _submit(self, command: str) -> None: self.tabs.setCurrentIndex(0); self.command_input.setText(command); self._on_send()
 
