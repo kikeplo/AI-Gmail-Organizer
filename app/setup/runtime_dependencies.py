@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import importlib.util
 import os
 import subprocess
@@ -18,9 +19,31 @@ class DependencyStatus:
 
 
 def _module_available(module: str) -> bool:
+    """Check a dependency in both normal and PyInstaller-frozen environments."""
     try:
-        return importlib.util.find_spec(module) is not None
-    except (ImportError, ValueError):
+        if importlib.util.find_spec(module) is not None:
+            return True
+    except (ImportError, ModuleNotFoundError, ValueError, AttributeError):
+        pass
+    try:
+        importlib.import_module(module)
+        return True
+    except Exception:
+        return False
+
+
+def _windows_input_ready() -> bool:
+    if os.name != "nt":
+        return False
+    # PyAutoGUI is the actual runtime dependency used by WindowsTools.
+    if not _module_available("pyautogui"):
+        return False
+    try:
+        import pyautogui
+        # Do not take a screenshot or move the pointer during startup; just verify
+        # the module exposes the runtime surface the app uses.
+        return all(hasattr(pyautogui, name) for name in ("size", "position", "click", "press", "write", "scroll", "screenshot"))
+    except Exception:
         return False
 
 
@@ -28,7 +51,7 @@ def check_dependencies() -> list[DependencyStatus]:
     return [
         DependencyStatus("PySide6", _module_available("PySide6"), True, "Desktop interface"),
         DependencyStatus("Google Gmail", _module_available("googleapiclient"), True, "Gmail integration"),
-        DependencyStatus("Windows input", os.name == "nt" and _module_available("pyautogui"), True, "Mouse and keyboard control"),
+        DependencyStatus("Windows input", _windows_input_ready(), True, "Mouse and keyboard control"),
         DependencyStatus("Windows UI Automation", os.name == "nt" and _module_available("pywinauto"), False, "Semantic desktop controls"),
         DependencyStatus("Browser automation", _module_available("playwright"), False, "Chrome and website automation"),
     ]
