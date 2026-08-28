@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import os
 import re
 
-from app.ai.classifier import InboxClassifier
+from app.ai.classifier import AIProvider, AIProviderError
 from app.gmail.action_service import GmailActionService
 from app.gmail.client import GmailClient
 from app.memory.store import MemoryStore
@@ -24,12 +23,8 @@ class CommandAgent:
     """Route user requests to the appropriate application service."""
 
     def __init__(self, gmail: GmailClient | None = None, memory: MemoryStore | None = None) -> None:
-        self.model = os.getenv("OPENAI_MODEL", "").strip()
-        self.api_key = os.getenv("OPENAI_API_KEY", "").strip()
-        self.base_url = os.getenv("OPENAI_BASE_URL", "").strip() or None
-        self.provider = os.getenv("AI_PROVIDER", "OpenAI-compatible").strip() or "OpenAI-compatible"
+        self.ai = AIProvider()
         self.gmail = gmail or GmailClient()
-        self.classifier = InboxClassifier()
         self.actions = GmailActionService(self.gmail)
         self.windows = WindowsActionRouter()
         self.memory = memory or MemoryStore()
@@ -56,7 +51,7 @@ class CommandAgent:
             response = self._handle_inbox_organization()
         elif self._looks_like_gmail_search(lowered):
             response = self._handle_gmail_search(command)
-        elif not self.api_key and not self.base_url:
+        elif not self.ai.configured:
             response = AgentResponse(self._local_response(command), mode="demo")
         else:
             response = self._ask_ai(command)
@@ -64,64 +59,22 @@ class CommandAgent:
         self.memory.remember(command, response.text, response.mode)
         return response
 
-    def _client(self):
-        from openai import OpenAI
-        # A dummy value lets OpenAI-compatible, keyless endpoints work too.
-        kwargs = {"api_key": self.api_key or "not-required"}
-        if self.base_url:
-            kwargs["base_url"] = self.base_url
-        return OpenAI(**kwargs)
-
-    def _resolve_model(self, client) -> str:
-        if self.model:
-            return self.model
-        # Many OpenAI-compatible APIs expose /models. If they do, automatically
-        # use the first available model so the user does not need to enter one.
-        models = client.models.list()
-        data = getattr(models, "data", None) or []
-        if not data:
-            raise RuntimeError("The provider did not return any models. Enter a model name in the API settings, or use a provider that exposes /models.")
-        model_id = getattr(data[0], "id", None)
-        if not model_id:
-            raise RuntimeError("The provider returned an invalid model list. Enter a model name manually.")
-        return str(model_id)
-
     def _ask_ai(self, command: str) -> AgentResponse:
         try:
-            client = self._client()
-            model = self._resolve_model(client)
-            response = client.chat.completions.create(
-                model=model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are the desktop assistant for AI Gmail Organizer. "
-                            "Gmail, Windows, and local memory capabilities are available. "
-                            "Never claim that an external action occurred unless the application "
-                            "explicitly reports success."
-                        ),
-                    },
-                    {"role": "user", "content": command},
-                ],
+            content = self.ai.chat(
+                command,
+                "You are the desktop assistant for AI Gmail Organizer. Gmail, Windows, and local memory capabilities are available. Never claim that an external action occurred unless the application explicitly reports success.",
             )
-            content = response.choices[0].message.content or ""
-            return AgentResponse(content, mode=f"ai:{self.provider}")
-        except Exception as exc:  # pragma: no cover
-            message = str(exc)
-            lowered = message.casefold()
-            if "429" in lowered or "insufficient_quota" in lowered or "credit_balance_exhausted" in lowered:
-                return AgentResponse(
-                    f"The {self.provider} provider rejected the request because its quota/credits are exhausted.\n\n"
-                    "Switch provider/API base URL or check the provider account.\n\n"
-                    f"Model: {self.model or 'Auto-detect'}",
-                    mode="quota_error",
-                )
+            return AgentResponse(content, mode=f"ai:{self.ai.provider or self.ai._protocol()}")
+        except AIProviderError as exc:
             return AgentResponse(
-                f"The {self.provider} AI provider could not complete the request.\n\n{message}\n\n"
-                "Check the API key and base URL. If the provider does not expose /models, enter its model name in Settings.",
+                f"The configured AI provider could not complete the request.\n\n{exc}\n\n"
+                "Check the API key and base URL. The app supports Gemini, Anthropic, Ollama, and OpenAI-compatible AI APIs. "
+                "The model is automatic when the provider exposes a model-list endpoint.",
                 mode="error",
             )
+        except Exception as exc:  # pragma: no cover
+            return AgentResponse(f"AI request failed.\n\n{exc}", mode="error")
 
     def _handle_memory_query(self, text: str) -> AgentResponse | None:
         if "history" in text or "remember" in text or "what did i ask" in text:
@@ -195,8 +148,9 @@ class CommandAgent:
             return connection_error
         try:
             messages = self.gmail.list_messages(query="", max_results=20)
-            classified = self.classifier.classify(messages)
-            return AgentResponse(self.classifier.summarize(classified), mode="classification")
+            from app.ai.classifier import InboxClassifier
+            classified = InboxClassifier().classify(messages)
+            return AgentResponse(InboxClassifier().summarize(classified), mode="classification")
         except Exception as exc:
             return AgentResponse(f"Inbox analysis failed.\n\n{exc}", mode="gmail_error")
 
