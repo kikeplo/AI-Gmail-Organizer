@@ -12,6 +12,7 @@ dependencies = [
     "google-auth-httplib2>=0.2,<1",
     "google-auth-oauthlib>=1.2,<2",
     "pywin32>=311; sys_platform == 'win32'",
+    "PyAutoGUI>=0.9.54; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]
