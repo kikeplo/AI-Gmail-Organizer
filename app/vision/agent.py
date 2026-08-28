@@ -1,4 +1,4 @@
-"""Vision-guided desktop agent with safety-aware action permissions."""
+"""Vision-guided desktop agent with explicit screen/input consent and AI failover."""
 
 from __future__ import annotations
 
@@ -7,7 +7,8 @@ import tempfile
 import time
 from pathlib import Path
 
-from app.ai.provider import AIProvider
+from app.ai.router import SmartAIRouter
+from app.agent.access import AccessManager
 from app.agent.permissions import PermissionPolicy
 from app.windows.tools import WindowsTools
 
@@ -19,10 +20,11 @@ class VisionAgentError(RuntimeError):
 class VisionAgent:
     """Observe the screen, choose an allowed action, execute it, and continue until verified done."""
 
-    def __init__(self, provider: AIProvider | None = None, tools: WindowsTools | None = None) -> None:
-        self.provider = provider or AIProvider()
+    def __init__(self, router: SmartAIRouter | None = None, tools: WindowsTools | None = None) -> None:
+        self.router = router or SmartAIRouter()
         self.tools = tools or WindowsTools()
         self.permissions = PermissionPolicy()
+        self.access = AccessManager()
         self.max_steps = 12
         self._stopped = False
         self._paused = False
@@ -42,11 +44,32 @@ class VisionAgent:
     def pause_requested(self) -> bool:
         return self._paused
 
+    def _ensure_access(self) -> None:
+        if self.access.is_allowed("screen") and self.access.is_allowed("input"):
+            return
+        try:
+            from PySide6.QtWidgets import QMessageBox
+            box = QMessageBox()
+            box.setWindowTitle("Screen & Desktop Access")
+            box.setText("AI Gmail Organizer needs permission to view your screen and control the mouse/keyboard for visual tasks.")
+            box.setInformativeText("Screen images are captured only while you run a visual task. You can revoke access later in Privacy & Permissions.")
+            allow = box.addButton("Allow access", QMessageBox.AcceptRole)
+            box.addButton("Not now", QMessageBox.RejectRole)
+            box.exec()
+            if box.clickedButton() is allow:
+                self.access.grant("screen")
+                self.access.grant("input")
+                return
+        except Exception:
+            pass
+        raise VisionAgentError("Screen and desktop control access is not enabled. Open Privacy & Permissions and allow access before running a visual task.")
+
     def run(self, goal: str, progress=None) -> str:
-        if not self.provider.configured:
-            raise VisionAgentError("Configure a vision-capable AI provider first.")
+        if not self.router.cloud.configured and not self.router.local.available():
+            raise VisionAgentError("Configure a vision-capable AI provider or install a local vision model first.")
         if not goal.strip():
             raise VisionAgentError("Please describe what you want me to do on the screen.")
+        self._ensure_access()
 
         self._stopped = False
         self.last_steps = []
@@ -66,7 +89,6 @@ class VisionAgent:
             self.last_steps.append(self._safe_step_record(action, decision, message))
             if progress:
                 progress(f"Step {step}: {message or action}")
-
             if action == "done":
                 return message or "Task completed."
             if action == "wait":
@@ -74,26 +96,19 @@ class VisionAgent:
                 continue
             if self.permissions.requires_confirmation(action):
                 return f"I paused before {action}. This action requires your confirmation before I can continue."
-
             self._execute_action(action, decision)
             time.sleep(0.35)
-
         return "I reached the maximum number of visual steps. The task was stopped to avoid uncontrolled automation."
 
     def _safe_step_record(self, action: str, decision: dict, message: str) -> dict:
         record = {"action": action, "message": message}
-        if action in {"click", "double_click", "right_click"}:
-            if "x" in decision and "y" in decision:
-                record["target"] = {"x": int(decision["x"]), "y": int(decision["y"])}
-        elif action == "press":
-            record["key"] = str(decision.get("key", ""))
+        if action in {"click", "double_click", "right_click"} and "x" in decision and "y" in decision:
+            record["target"] = {"x": int(decision["x"]), "y": int(decision["y"])}
+        elif action == "press": record["key"] = str(decision.get("key", ""))
         elif action == "hotkey":
             keys = decision.get("keys", [])
-            if isinstance(keys, list):
-                record["keys"] = [str(k) for k in keys]
-        elif action == "scroll":
-            record["amount"] = int(decision.get("amount", -5))
-        # Never persist text that might contain passwords or other secrets.
+            if isinstance(keys, list): record["keys"] = [str(k) for k in keys]
+        elif action == "scroll": record["amount"] = int(decision.get("amount", -5))
         return record
 
     def _decide(self, goal: str, image) -> dict:
@@ -104,7 +119,6 @@ class VisionAgent:
             encoded = base64.b64encode(temp_path.read_bytes()).decode("ascii")
         finally:
             temp_path.unlink(missing_ok=True)
-
         prompt = (
             "You control a Windows desktop using screenshots. Return ONLY valid JSON with one action.\n"
             "Goal: " + goal + "\n"
@@ -114,25 +128,17 @@ class VisionAgent:
             "Never choose or attempt to bypass confirmation for send, submit, delete, purchase, upload, download, "
             "or other consequential actions. For done, include a concise message."
         )
-        return self.provider.vision_json(prompt, encoded)
+        return self.router.vision_json(prompt, encoded)
 
     def _execute_action(self, action: str, decision: dict) -> None:
-        if action == "click":
-            self.tools.click(int(decision["x"]), int(decision["y"]))
-        elif action == "double_click":
-            self.tools.double_click(int(decision["x"]), int(decision["y"]))
-        elif action == "right_click":
-            self.tools.click(int(decision["x"]), int(decision["y"]), button="right")
-        elif action == "type":
-            self.tools.type_text(str(decision.get("text", "")))
-        elif action == "press":
-            self.tools.press(str(decision["key"]))
+        if action == "click": self.tools.click(int(decision["x"]), int(decision["y"]))
+        elif action == "double_click": self.tools.double_click(int(decision["x"]), int(decision["y"]))
+        elif action == "right_click": self.tools.click(int(decision["x"]), int(decision["y"]), button="right")
+        elif action == "type": self.tools.type_text(str(decision.get("text", "")))
+        elif action == "press": self.tools.press(str(decision["key"]))
         elif action == "hotkey":
             keys = decision.get("keys", [])
-            if not isinstance(keys, list):
-                raise VisionAgentError("Invalid hotkey plan returned by the vision model.")
+            if not isinstance(keys, list): raise VisionAgentError("Invalid hotkey plan returned by the vision model.")
             self.tools.hotkey(*[str(key) for key in keys])
-        elif action == "scroll":
-            self.tools.scroll(int(decision.get("amount", -5)))
-        else:
-            raise VisionAgentError(f"Unsupported visual action: {action}")
+        elif action == "scroll": self.tools.scroll(int(decision.get("amount", -5)))
+        else: raise VisionAgentError(f"Unsupported visual action: {action}")
