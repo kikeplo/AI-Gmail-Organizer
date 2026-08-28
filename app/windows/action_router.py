@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 import re
+import subprocess
 
 from app.windows.tools import ActiveWindow, WindowsTools
 from app.windows.ui_automation import UIAutomationError, WindowsUIAutomation
@@ -16,7 +18,14 @@ class WindowActionResponse:
 
 
 class WindowsActionRouter:
-    """Translate desktop requests into semantic UI automation or low-level input."""
+    """Translate desktop requests into semantic UI automation, app launch, or low-level input."""
+
+    APP_ALIASES = {
+        "microsoft teams": "msteams:",
+        "teams": "msteams:",
+        "calculator": "calculator:",
+        "calc": "calculator:",
+    }
 
     def __init__(self, tools: WindowsTools | None = None, ui: WindowsUIAutomation | None = None) -> None:
         self.tools = tools or WindowsTools()
@@ -27,10 +36,37 @@ class WindowsActionRouter:
         if not self._is_windows_intent(text):
             return None
         try:
-            semantic = self._semantic_click_target(command)
-            if semantic:
-                element = self.ui.click(semantic)
-                return WindowActionResponse(f"Clicked '{element.name}' using Windows UI Automation.", mode="windows_ui_action")
+            app_name = self._app_to_open(command)
+            if app_name:
+                try:
+                    self._launch_known_app(app_name)
+                    return WindowActionResponse(f"Opening {app_name}.", mode="windows_app_launch")
+                except Exception as launch_error:
+                    # Continue to semantic UI automation if the app protocol could not be launched.
+                    try:
+                        semantic = self._semantic_click_target(command)
+                        if semantic:
+                            element = self.ui.click(semantic)
+                            return WindowActionResponse(f"Opened '{element.name}' using Windows UI Automation.", mode="windows_ui_action")
+                    except Exception:
+                        pass
+                    raise launch_error
+
+            try:
+                semantic = self._semantic_click_target(command)
+                if semantic:
+                    element = self.ui.click(semantic)
+                    return WindowActionResponse(f"Clicked '{element.name}' using Windows UI Automation.", mode="windows_ui_action")
+            except UIAutomationError as ui_error:
+                # pywinauto may be unavailable in an unpacked/incomplete build. Continue to
+                # deterministic low-level actions instead of turning every command into an error.
+                if any(term in text for term in ("click", "double click", "double-click", "right click", "right-click", "type ", "press ", "hotkey", "shortcut", "scroll")):
+                    pass
+                else:
+                    return WindowActionResponse(
+                        f"Semantic Windows controls are unavailable ({ui_error}). I can still use direct desktop controls or visual automation.",
+                        mode="windows_ui_unavailable",
+                    )
 
             if any(term in text for term in ("what window", "active window", "focused window", "which window")):
                 return WindowActionResponse(self._describe_active_window(self.tools.get_active_window()))
@@ -76,12 +112,26 @@ class WindowsActionRouter:
                 self.tools.restore_active_window()
                 return WindowActionResponse("The active window was restored.", mode="windows_action")
             return WindowActionResponse("Desktop control is available. You can ask me to click, double-click, type, press a key, use a shortcut, scroll, or control the active window.")
-        except UIAutomationError as exc:
-            return WindowActionResponse(f"I could not find that desktop control semantically. {exc}\n\nTry the command again or use a visual/screen-based request.", mode="windows_ui_unavailable")
         except OSError as exc:
             return WindowActionResponse(str(exc), mode="windows_unavailable")
         except Exception as exc:
             return WindowActionResponse(f"Desktop action failed.\n\n{exc}", mode="windows_error")
+
+    @classmethod
+    def _app_to_open(cls, command: str) -> str | None:
+        text = command.casefold().strip()
+        match = re.match(r"(?:open|launch|start|run)\s+(?:the\s+)?(.+?)(?:\s+app|\s+application)?$", text)
+        if not match:
+            return None
+        candidate = re.sub(r"[^a-z0-9 ]+", " ", match.group(1)).strip()
+        return candidate if candidate in cls.APP_ALIASES else None
+
+    @classmethod
+    def _launch_known_app(cls, app_name: str) -> None:
+        if os.name != "nt":
+            raise OSError("Windows app launching is only available on Windows.")
+        protocol = cls.APP_ALIASES[app_name]
+        os.startfile(protocol)
 
     @staticmethod
     def _semantic_click_target(command: str) -> str | None:
@@ -101,7 +151,7 @@ class WindowsActionRouter:
 
     @staticmethod
     def _is_windows_intent(text: str) -> bool:
-        actions = ("active", "focused", "minimize", "maximize", "restore", "click", "double click", "double-click", "right click", "right-click", "type ", "press ", "hotkey", "shortcut", "scroll", "select", "open ")
+        actions = ("active", "focused", "minimize", "maximize", "restore", "click", "double click", "double-click", "right click", "right-click", "type ", "press ", "hotkey", "shortcut", "scroll", "select", "open ", "launch ", "start ", "run ")
         return ("window" in text or "desktop" in text or "screen" in text or any(term in text for term in actions)) and any(term in text for term in actions)
 
     @staticmethod
