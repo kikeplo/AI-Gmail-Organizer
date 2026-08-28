@@ -1,43 +1,39 @@
 # Architecture Notes
 
-## v0.6
+## v0.7
 
-The application now exposes two automation boundaries: Gmail tools and Windows tools. The UI remains responsible for presentation and user confirmation, while the command agent routes explicit intents to typed service layers.
+The application now adds a local memory boundary alongside Gmail and Windows automation. The UI remains responsible for presentation and confirmation; the command agent routes requests to typed services.
 
 ```text
-                     Windows Overlay (PySide6)
+                         Windows Overlay
                               │
                               ▼
                          CommandAgent
-                       ┌──────┴───────┐
-                       ▼              ▼
-                 Gmail services   WindowsActionRouter
-                       │              │
-                       ▼              ▼
-                  Gmail API       WindowsTools
-                       │              │
-                OAuth + modify     pywin32
+                    ┌─────────┼─────────┐
+                    ▼         ▼         ▼
+              Gmail tools  Windows   MemoryStore
+                    │         │         │
+                    ▼         ▼         ▼
+                Gmail API  pywin32   SQLite file
 ```
 
-### Windows automation boundary
+### Local memory
 
-`WindowsTools` currently provides:
+`MemoryStore` keeps lightweight interaction records locally:
 
-- foreground/active window metadata
-- minimize active window
-- maximize active window
-- restore active window
+- command text
+- response text
+- response mode
+- UTC timestamp
 
-The implementation is explicitly guarded to Windows. The router returns a clear unavailable/error mode on other platforms rather than pretending that a desktop action ran.
+The SQLite database is created under `data/assistant.db` by default and is excluded from version control.
 
-### Command routing
-
-The `CommandAgent` checks for supported Windows intents before Gmail actions and general AI responses. This gives deterministic commands a predictable path even when no external AI key is configured.
+The agent exposes simple local queries for recent history and aggregate usage statistics. This is intentionally lightweight: v0.7 does not upload memory to a hosted service or treat email contents as a global training store.
 
 ### Safety boundary
 
-Gmail write operations remain confirmation-protected. Windows automation is limited to the explicit window-management tool set; arbitrary shell commands are not exposed through the natural-language interface.
+Gmail write operations remain confirmation-protected. Windows automation remains limited to explicit supported window-management operations. Local memory is stored on the user's machine.
 
-## Next architectural step
+## v1.0 direction
 
-v0.7 should introduce persistent local state for user preferences, action history, and lightweight analytics. The final v1.0 can then combine Gmail workflows, Windows automation, and a polished agent/tool interface behind clear permission boundaries.
+The final milestone should unify Gmail, Windows automation, local memory, and the AI tool interface into a polished desktop assistant with clear permissions, better error handling, and production-quality UX.
