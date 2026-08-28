@@ -1,35 +1,43 @@
 # Architecture Notes
 
-## v0.4
+## v0.6
 
-The application is organized into separate layers:
+The application now exposes two automation boundaries: Gmail tools and Windows tools. The UI remains responsible for presentation and user confirmation, while the command agent routes explicit intents to typed service layers.
 
 ```text
-Windows Overlay (PySide6)
-        │
-        ▼
-   CommandAgent
-   ┌────┴────────────┐
-   ▼                 ▼
-GmailClient     InboxClassifier
-   │                 │
-   ▼                 ▼
- Gmail API       AI model / local rules
+                     Windows Overlay (PySide6)
+                              │
+                              ▼
+                         CommandAgent
+                       ┌──────┴───────┐
+                       ▼              ▼
+                 Gmail services   WindowsActionRouter
+                       │              │
+                       ▼              ▼
+                  Gmail API       WindowsTools
+                       │              │
+                OAuth + modify     pywin32
 ```
 
-### Inbox analysis flow
+### Windows automation boundary
 
-1. The user selects **Organize inbox** or enters a natural-language command.
-2. `CommandAgent` ensures Gmail OAuth is connected.
-3. `GmailClient` retrieves a small read-only message sample with sender, subject, and snippet metadata.
-4. `InboxClassifier` classifies each message as `important`, `work`, `personal`, `promotions`, `newsletters`, or `other`.
-5. With an AI key, the classifier requests structured JSON classification from the configured model. Without one, it uses deterministic local rules.
-6. The classifier returns category counts and concise explanations for the top messages.
+`WindowsTools` currently provides:
+
+- foreground/active window metadata
+- minimize active window
+- maximize active window
+- restore active window
+
+The implementation is explicitly guarded to Windows. The router returns a clear unavailable/error mode on other platforms rather than pretending that a desktop action ran.
+
+### Command routing
+
+The `CommandAgent` checks for supported Windows intents before Gmail actions and general AI responses. This gives deterministic commands a predictable path even when no external AI key is configured.
 
 ### Safety boundary
 
-v0.4 does not modify Gmail. There are no archive, label, delete, send, or move operations. The organization feature remains read-only while the classification pipeline is validated.
+Gmail write operations remain confirmation-protected. Windows automation is limited to the explicit window-management tool set; arbitrary shell commands are not exposed through the natural-language interface.
 
-### Next architectural step
+## Next architectural step
 
-v0.5 will add explicit Gmail write tools behind a confirmation layer. The agent should propose an action, show the affected messages, and wait for user approval before changing external state.
+v0.7 should introduce persistent local state for user preferences, action history, and lightweight analytics. The final v1.0 can then combine Gmail workflows, Windows automation, and a polished agent/tool interface behind clear permission boundaries.
