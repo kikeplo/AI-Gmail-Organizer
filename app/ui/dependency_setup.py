@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QDialog, QLabel, QPushButton, QVBoxLayout
+from PySide6.QtWidgets import QDialog, QLabel, QMessageBox, QPushButton, QVBoxLayout
 
 from app.setup.runtime_dependencies import check_dependencies, repair_optional_dependencies, browser_runtime_ready
 
@@ -54,7 +54,6 @@ class DependencySetupDialog(QDialog):
         items = check_dependencies()
         lines = []
         for item in items:
-            # Keep technical package names out of the normal user-facing status.
             label = self._display_name(item.name)
             if item.available:
                 lines.append(f"✓ {label}")
