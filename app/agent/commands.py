@@ -1,4 +1,4 @@
-"""Command routing for the AI Gmail Organizer v0.6."""
+"""Command routing for the AI Gmail Organizer v0.7."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import re
 from app.ai.classifier import InboxClassifier
 from app.gmail.action_service import GmailActionService
 from app.gmail.client import GmailClient
+from app.memory.store import MemoryStore
 from app.windows.action_router import WindowsActionRouter
 
 
@@ -20,57 +21,79 @@ class AgentResponse:
 
 
 class CommandAgent:
-    """Route Gmail and Windows commands while preserving action boundaries."""
+    """Route commands across Gmail, Windows, AI, and local memory."""
 
-    def __init__(self, gmail: GmailClient | None = None) -> None:
+    def __init__(self, gmail: GmailClient | None = None, memory: MemoryStore | None = None) -> None:
         self.model = os.getenv("OPENAI_MODEL", "gpt-5.6-luna")
         self.api_key = os.getenv("OPENAI_API_KEY")
         self.gmail = gmail or GmailClient()
         self.classifier = InboxClassifier()
         self.actions = GmailActionService(self.gmail)
         self.windows = WindowsActionRouter()
+        self.memory = memory or MemoryStore()
 
     def respond(self, command: str) -> AgentResponse:
         command = command.strip()
         if not command:
-            return AgentResponse("Please enter a command.")
+            response = AgentResponse("Please enter a command.")
+            self.memory.remember("", response.text, response.mode)
+            return response
 
         lowered = command.casefold()
+        remembered = self._handle_memory_query(lowered)
+        if remembered is not None:
+            self.memory.remember(command, remembered.text, remembered.mode)
+            return remembered
 
         windows_response = self.windows.handle(command)
         if windows_response is not None:
-            return AgentResponse(windows_response.text, mode=windows_response.mode)
+            response = AgentResponse(windows_response.text, mode=windows_response.mode)
+        elif self._looks_like_mutation(lowered):
+            response = self._plan_mutation(command)
+        elif self._looks_like_inbox_organization(lowered):
+            response = self._handle_inbox_organization()
+        elif self._looks_like_gmail_search(lowered):
+            response = self._handle_gmail_search(command)
+        elif not self.api_key:
+            response = AgentResponse(self._local_response(command), mode="demo")
+        else:
+            response = self._ask_ai(command)
 
-        if self._looks_like_mutation(lowered):
-            return self._plan_mutation(command)
-        if self._looks_like_inbox_organization(lowered):
-            return self._handle_inbox_organization()
-        if self._looks_like_gmail_search(lowered):
-            return self._handle_gmail_search(command)
+        self.memory.remember(command, response.text, response.mode)
+        return response
 
-        if not self.api_key:
-            return AgentResponse(self._local_response(command), mode="demo")
-
+    def _ask_ai(self, command: str) -> AgentResponse:
         try:
             from openai import OpenAI
             client = OpenAI(api_key=self.api_key)
             response = client.responses.create(
                 model=self.model,
                 input=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are the AI Gmail Organizer desktop assistant. "
-                            "Gmail search, classification, label, archive, and Windows window tools exist. "
-                            "Never claim an external action happened unless the application explicitly reports it."
-                        ),
-                    },
+                    {"role": "system", "content": "You are the AI Gmail Organizer desktop assistant. Gmail, Windows, and local memory capabilities exist. Never claim an external action happened unless the application explicitly reports it."},
                     {"role": "user", "content": command},
                 ],
             )
             return AgentResponse(response.output_text, mode="openai")
         except Exception as exc:  # pragma: no cover
             return AgentResponse(f"The AI provider could not be reached.\n\n{exc}", mode="error")
+
+    def _handle_memory_query(self, text: str) -> AgentResponse | None:
+        if "history" in text or "remember" in text or "what did i ask" in text:
+            interactions = self.memory.recent(8)
+            if not interactions:
+                return AgentResponse("I do not have any saved interaction history yet.", mode="memory")
+            lines = ["Recent local memory:", ""]
+            for item in interactions:
+                lines.append(f"• {item.command or '(empty command)'}")
+                lines.append(f"  {item.mode}: {item.response.splitlines()[0]}")
+            return AgentResponse("\n".join(lines), mode="memory")
+        if "usage" in text or "analytics" in text or "stats" in text:
+            counts = self.memory.mode_counts()
+            lines = [f"Local usage: {self.memory.count()} interaction(s)", ""]
+            for mode, count in counts.items():
+                lines.append(f"{mode}: {count}")
+            return AgentResponse("\n".join(lines), mode="analytics")
+        return None
 
     @staticmethod
     def _looks_like_inbox_organization(text: str) -> bool:
@@ -95,7 +118,6 @@ class CommandAgent:
             return AgentResponse(f"Gmail lookup failed.\n\n{exc}", mode="gmail_error")
         if not messages:
             return AgentResponse("No messages matched the request, so there is nothing to change.", mode="gmail")
-
         ids = [message.id for message in messages]
         if "archive" in command.casefold():
             action = self.actions.plan_archive(ids)
@@ -103,7 +125,6 @@ class CommandAgent:
             match = re.search(r"(?:label|move to)\s+['\"]?([^'\"]+)['\"]?$", command, flags=re.IGNORECASE)
             label_name = match.group(1).strip() if match else "Organized"
             action = self.actions.plan_label(ids, label_name)
-
         preview = ["⚠️ Confirmation required", "", action.description, "", "Nothing has been changed yet.", "Confirm this action from the application before execution."]
         return AgentResponse("\n".join(preview), mode="confirmation", pending_action=action)
 
