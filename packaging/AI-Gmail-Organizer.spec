@@ -1,6 +1,5 @@
-# PyInstaller configuration for the Windows desktop application.
-# Third-party automation packages and their runtime helpers are bundled so the end-user
-# does not need Python or pip installed separately.
+# PyInstaller configuration for a self-contained Windows application folder.
+# The EXE is the launcher; browser and automation runtimes live beside it.
 
 from pathlib import Path
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
@@ -24,6 +23,8 @@ for package in ('pyautogui', 'pyscreeze', 'PIL', 'pywinauto', 'playwright'):
     except Exception:
         pass
 
+# The build script places Playwright's Chromium runtime in .playwright.
+# In onedir mode it becomes a sibling folder of the EXE under dist/AI-Gmail-Organizer.
 playwright_local = project_root / '.playwright'
 if playwright_local.exists():
     datas.append((str(playwright_local), 'playwright'))
@@ -56,4 +57,13 @@ exe = EXE(
     strip=False,
     upx=True,
     console=False,
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=True,
+    name='AI-Gmail-Organizer',
 )
