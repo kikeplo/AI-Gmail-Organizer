@@ -17,15 +17,14 @@ datas = []
 datas += collect_data_files('pywinauto')
 datas += collect_data_files('playwright')
 
-# When the build script installs Chromium with PLAYWRIGHT_BROWSERS_PATH=0,
-# collect Playwright's bundled browser runtime into the EXE distribution.
+# The build script puts Chromium in .playwright so it can travel with the EXE build.
 playwright_local = project_root / '.playwright'
 if playwright_local.exists():
     datas.append((str(playwright_local), 'playwright'))
 
 
 a = Analysis(
-    [str(project_root / 'main.py')],
+    [str(project_root / 'launcher.py')],
     pathex=[str(project_root)],
     binaries=[],
     datas=datas,
