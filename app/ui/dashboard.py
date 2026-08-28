@@ -12,6 +12,13 @@ class StatCard(QFrame):
     def __init__(self, label: str, value: str, detail: str = "") -> None:
         super().__init__()
         self.setObjectName("statCard")
+        self.setStyleSheet("""
+            QFrame#statCard { background: #1D2535; border: 1px solid #354057; border-radius: 14px; }
+            QLabel#cardEyebrow, QLabel#cardValue, QLabel#cardDetail { color: #F8FAFC; }
+            QLabel#cardEyebrow { color: #CBD5E1; font-size: 10px; font-weight: 700; }
+            QLabel#cardValue { font-size: 26px; font-weight: 800; }
+            QLabel#cardDetail { color: #CBD5E1; font-size: 11px; }
+        """)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(18, 16, 18, 16)
         eyebrow = QLabel(label.upper())
@@ -63,13 +70,14 @@ class UsageView(QWidget):
         self.store = store
         self.layout = QVBoxLayout(self)
         self.setStyleSheet("""
+            QWidget { color: #F8FAFC; }
             QLabel#usageTitle, QLabel#usageSubtitle, QLabel#usageSection,
             QLabel#usageModeName, QLabel#usageModeValue { color: #F8FAFC; }
             QLabel#usageTitle { font-size: 20px; font-weight: 700; }
             QLabel#usageSubtitle { color: #D6DCE7; font-size: 12px; }
             QLabel#usageSection { font-size: 12px; font-weight: 700; margin-top: 8px; }
-            QLabel#usageModeName, QLabel#usageModeValue { font-size: 12px; }
-            QProgressBar { background: rgba(255,255,255,18); border: none; border-radius: 5px; height: 10px; }
+            QLabel#usageModeName, QLabel#usageModeValue { color: #F8FAFC; font-size: 12px; font-weight: 600; }
+            QProgressBar { background: #30394B; border: none; border-radius: 5px; height: 10px; }
             QProgressBar::chunk { background: #6D86F7; border-radius: 5px; }
         """)
         self.refresh()
