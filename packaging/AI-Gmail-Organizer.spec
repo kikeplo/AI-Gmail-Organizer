@@ -1,4 +1,4 @@
-# PyInstaller configuration for a self-contained Windows application folder.
+# PyInstaller configuration for a portable Windows application folder.
 # The EXE is the launcher; browser and automation runtimes live beside it.
 
 from pathlib import Path
@@ -23,9 +23,13 @@ for package in ('pyautogui', 'pyscreeze', 'PIL', 'pywinauto', 'playwright'):
     except Exception:
         pass
 
+# The build script places Chromium under .playwright. In onedir mode it is
+# copied into the sibling playwright folder beside the EXE.
 playwright_local = project_root / '.playwright'
 if playwright_local.exists():
     datas.append((str(playwright_local), 'playwright'))
+
+runtime_hook = project_root / 'packaging' / 'runtime_hooks' / 'playwright_portable.py'
 
 
 a = Analysis(
@@ -36,7 +40,7 @@ a = Analysis(
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[str(project_root / 'packaging' / 'runtime_hook.py')],
+    runtime_hooks=[str(runtime_hook)],
     excludes=[],
     noarchive=False,
 )
