@@ -1,32 +1,28 @@
 # AI Gmail Organizer
 
-AI-powered Windows desktop assistant for Gmail organization, desktop window control, and local productivity workflows.
+Windows desktop assistant for Gmail organization, window controls, and local productivity workflows.
 
-## v1.0.0 — unified desktop assistant
-
-The project has reached its first complete milestone: Gmail integration, confirmation-protected inbox actions, Windows window automation, local SQLite memory, usage analytics, and a polished always-on-top command center are combined behind one interface.
-
-### What it can do
+## Features
 
 **Gmail**
 - OAuth 2.0 authentication
 - Search unread, starred, recent, and sender-specific messages
-- Analyze and classify inbox messages
-- Apply or create Gmail labels
+- Inbox classification and summaries
+- Create and apply Gmail labels
 - Archive messages
-- Require explicit confirmation before Gmail mutations
+- Confirmation before actions that change Gmail
 
 **Windows**
 - Inspect the active window
 - Minimize, maximize, and restore the active window
-- Keep automation behind a small explicit tool surface rather than arbitrary shell commands
+- Small explicit automation surface rather than arbitrary shell commands
 
-**Local assistant features**
+**Local assistant**
 - Natural-language command interface
 - Optional OpenAI Responses API integration
-- Persistent local interaction history
-- Lightweight usage analytics
-- Local demo/deterministic fallbacks when external AI credentials are unavailable
+- Local interaction history in SQLite
+- Usage statistics
+- Deterministic fallbacks when external AI services are not configured
 
 ### Example commands
 
@@ -41,7 +37,7 @@ Show my history
 Show usage analytics
 ```
 
-### Architecture
+## Architecture
 
 ```text
                     Windows Overlay (PySide6)
@@ -56,18 +52,18 @@ Show usage analytics
              Gmail API     pywin32      SQLite
                   │
              OAuth 2.0
-
+                              
                        Optional AI provider
                               │
                               ▼
                      OpenAI Responses API
 ```
 
-The UI handles presentation and confirmation. The agent routes commands to typed service boundaries. Gmail write operations are confirmation-protected, and arbitrary shell command execution is not exposed through natural-language routing.
+The UI is responsible for presentation and confirmation. The command layer routes requests to the Gmail, Windows, and local-memory services. Gmail mutations are confirmation-protected, and arbitrary shell commands are not exposed through the natural-language interface.
 
-### Setup
+## Setup
 
-#### 1. Install
+### 1. Install
 
 ```powershell
 python -m venv .venv
@@ -76,7 +72,7 @@ pip install -e .
 copy .env.example .env
 ```
 
-#### 2. Configure Google OAuth
+### 2. Configure Gmail
 
 1. Enable the Gmail API in Google Cloud.
 2. Create an OAuth client for a Desktop app.
@@ -84,42 +80,44 @@ copy .env.example .env
 4. Run the application and issue a Gmail command.
 5. Complete Google's browser authorization flow.
 
-The application stores its local OAuth token in `token.json`.
+The application stores the local OAuth token in `token.json`.
 
-#### 3. Optional AI provider
+### 3. Configure the AI provider (optional)
 
-Add to `.env`:
+Set these values in `.env`:
 
 ```text
 OPENAI_API_KEY=your_key_here
-OPENAI_MODEL=gpt-5.6-luna
+OPENAI_MODEL=your_model_name
 ```
 
-#### 4. Run
+The model is intentionally configured by the user rather than hard-coded. Without an API key/model, the application uses the local command paths.
+
+### 4. Run
 
 ```powershell
 python main.py
 ```
 
-#### 5. Test
+### 5. Test
 
 ```powershell
 pytest
 ```
 
-### Security notes
+## Security
 
-Do not commit `credentials.json`, `token.json`, `.env`, or local SQLite databases. They are excluded through `.gitignore`.
+Keep `credentials.json`, `token.json`, `.env`, and local SQLite databases out of version control. They are excluded by `.gitignore`.
 
-Gmail permissions use OAuth scopes appropriate to the available features. Any action that changes Gmail requires a separate confirmation step in the UI.
+The Gmail client uses OAuth scopes matching the supported features. Every Gmail action that changes message state goes through the confirmation step in the UI.
 
 ## Development history
 
 - **v0.1** — desktop overlay foundation
-- **v0.2** — interactive AI command surface
+- **v0.2** — interactive command interface
 - **v0.3** — Gmail OAuth and read-only retrieval
-- **v0.4** — AI inbox classification and summaries
-- **v0.5** — confirmation-protected Gmail labels and archive actions
+- **v0.4** — inbox classification and summaries
+- **v0.5** — confirmed Gmail labels and archive actions
 - **v0.6** — Windows automation tools
-- **v0.7** — persistent local memory and analytics
-- **v1.0.0** — unified polished desktop assistant
+- **v0.7** — local memory and usage analytics
+- **v1.0.0** — unified desktop assistant
