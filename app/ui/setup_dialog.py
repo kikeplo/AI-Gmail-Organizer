@@ -3,16 +3,11 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QThread, Signal
-from PySide6.QtWidgets import (
-    QComboBox, QDialog, QFileDialog, QFormLayout, QHBoxLayout, QLineEdit,
-    QMessageBox, QPushButton, QVBoxLayout,
-)
+from PySide6.QtWidgets import QComboBox, QDialog, QFormLayout, QHBoxLayout, QLineEdit, QMessageBox, QPushButton, QVBoxLayout
 
-from app.ai.provider import AIProvider, AIProviderError
-from app.config.user_settings import (
-    CREDENTIALS_FILE, ENV_FILE, install_google_credentials, read_config,
-    save_api_key, save_base_url, save_model, save_provider_name,
-)
+from app.ai.provider import AIProvider
+from app.config.user_settings import read_config, save_api_key, save_base_url, save_model, save_provider_name
+from app.gmail.client import GmailClient
 
 
 class _ModelLoader(QThread):
@@ -30,20 +25,34 @@ class _ModelLoader(QThread):
             self.load_failed.emit(str(exc))
 
 
+class _GoogleLogin(QThread):
+    connected = Signal(str)
+    failed = Signal(str)
+
+    def run(self) -> None:
+        try:
+            client = GmailClient()
+            client.connect()
+            self.connected.emit("Google account connected")
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
 class SetupDialog(QDialog):
-    """Collect and edit per-user application settings."""
+    """Modern application settings with browser-based Google sign-in."""
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("AI Gmail Organizer — Settings")
         self.setMinimumWidth(700)
         self._loader: _ModelLoader | None = None
+        self._google_login: _GoogleLogin | None = None
         config = read_config()
         layout = QVBoxLayout(self)
         form = QFormLayout()
 
         self.provider = QLineEdit(config.get("AI_PROVIDER", ""))
-        self.provider.setPlaceholderText("Optional — e.g. Gemini, Anthropic, Ollama, OpenRouter")
+        self.provider.setPlaceholderText("Optional — Gemini, Anthropic, Ollama, OpenRouter, etc.")
         form.addRow("AI provider", self.provider)
 
         self.api_key = QLineEdit(config.get("OPENAI_API_KEY", ""))
@@ -59,8 +68,8 @@ class SetupDialog(QDialog):
         self.model = QComboBox()
         self.model.setEditable(True)
         self.model.setInsertPolicy(QComboBox.NoInsert)
+        self.model.setPlaceholderText("Automatic — select a model or leave blank")
         saved_model = config.get("OPENAI_MODEL", "")
-        self.model.setPlaceholderText("Automatic — choose a model or leave blank")
         if saved_model:
             self.model.addItem(saved_model)
             self.model.setCurrentText(saved_model)
@@ -70,18 +79,18 @@ class SetupDialog(QDialog):
         model_row.addWidget(refresh)
         form.addRow("Model", model_row)
 
-        oauth_row = QHBoxLayout()
-        self.oauth_status = QLineEdit()
-        self.oauth_status.setReadOnly(True)
-        self.oauth_status.setText(str(CREDENTIALS_FILE) if CREDENTIALS_FILE.exists() else "Not configured")
-        browse = QPushButton("Choose OAuth JSON…")
-        browse.clicked.connect(self._choose_credentials)
-        oauth_row.addWidget(self.oauth_status, 1)
-        oauth_row.addWidget(browse)
-        form.addRow("Gmail OAuth", oauth_row)
+        google_row = QHBoxLayout()
+        self.google_status = QLineEdit()
+        self.google_status.setReadOnly(True)
+        self.google_status.setText("Sign in with Google to connect Gmail")
+        connect_google = QPushButton("Sign in with Google")
+        connect_google.clicked.connect(self._connect_google)
+        google_row.addWidget(self.google_status, 1)
+        google_row.addWidget(connect_google)
+        form.addRow("Gmail", google_row)
         layout.addLayout(form)
 
-        note = QLineEdit("Enter your provider/key/base URL, then Refresh models. Leave Model blank to let the app choose automatically.")
+        note = QLineEdit("Google sign-in opens your normal browser. Your Gmail password is never entered into this app.")
         note.setReadOnly(True)
         note.setObjectName("settingsNote")
         layout.addWidget(note)
@@ -149,15 +158,22 @@ class SetupDialog(QDialog):
         self.model.setEnabled(True)
         QMessageBox.warning(self, "Could not load models", message)
 
-    def _choose_credentials(self) -> None:
-        source, _ = QFileDialog.getOpenFileName(self, "Select Google OAuth client JSON", "", "JSON files (*.json)")
-        if not source:
+    def _connect_google(self) -> None:
+        if self._google_login is not None and self._google_login.isRunning():
             return
-        try:
-            destination = install_google_credentials(source)
-            self.oauth_status.setText(str(destination))
-        except (OSError, ValueError) as exc:
-            QMessageBox.critical(self, "Could not import credentials", str(exc))
+        self.google_status.setText("Opening Google sign-in in your browser…")
+        self._google_login = _GoogleLogin()
+        self._google_login.connected.connect(self._google_connected)
+        self._google_login.failed.connect(self._google_failed)
+        self._google_login.finished.connect(self._google_login.deleteLater)
+        self._google_login.start()
+
+    def _google_connected(self, message: str) -> None:
+        self.google_status.setText("✓ Google account connected")
+
+    def _google_failed(self, message: str) -> None:
+        self.google_status.setText("Sign-in failed — try again")
+        QMessageBox.warning(self, "Google sign-in", message)
 
     def _save(self) -> None:
         try:
