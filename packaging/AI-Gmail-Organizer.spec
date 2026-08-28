@@ -1,5 +1,6 @@
 # PyInstaller configuration for the Windows desktop application.
-# Third-party automation packages are bundled so the end-user does not need Python or pip.
+# Third-party automation packages and their runtime helpers are bundled so the end-user
+# does not need Python or pip installed separately.
 
 from pathlib import Path
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
@@ -10,21 +11,28 @@ hiddenimports = [
     'win32api', 'win32con', 'win32gui', 'win32process',
     'comtypes', 'comtypes.client',
 ]
-hiddenimports += collect_submodules('pywinauto')
-hiddenimports += collect_submodules('playwright')
+for package in ('pyautogui', 'pyscreeze', 'pytweening', 'pymsgbox', 'mouseinfo', 'PIL', 'pywinauto', 'playwright'):
+    try:
+        hiddenimports += collect_submodules(package)
+    except Exception:
+        pass
 
 datas = []
-datas += collect_data_files('pywinauto')
-datas += collect_data_files('playwright')
+for package in ('pyautogui', 'pyscreeze', 'PIL', 'pywinauto', 'playwright'):
+    try:
+        datas += collect_data_files(package)
+    except Exception:
+        pass
 
-# The build script puts Chromium in .playwright so it can travel with the EXE build.
+# When the build script installs Chromium with PLAYWRIGHT_BROWSERS_PATH pointing
+# at this directory, the browser runtime is bundled into the distribution.
 playwright_local = project_root / '.playwright'
 if playwright_local.exists():
     datas.append((str(playwright_local), 'playwright'))
 
 
 a = Analysis(
-    [str(project_root / 'launcher.py')],
+    [str(project_root / 'main.py')],
     pathex=[str(project_root)],
     binaries=[],
     datas=datas,
