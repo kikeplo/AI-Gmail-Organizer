@@ -1,35 +1,59 @@
-"""Visual dashboard views for local history and usage."""
+"""Polished dashboard views for local history and usage."""
 
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QProgressBar, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QProgressBar,
+    QScrollArea,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
 
 from app.memory.store import MemoryStore
 
 
 class StatCard(QFrame):
+    """Compact usage card with explicit contrast and content that never depends on global styles."""
+
     def __init__(self, label: str, value: str, detail: str = "") -> None:
         super().__init__()
         self.setObjectName("statCard")
-        self.setStyleSheet("""
-            QFrame#statCard { background: #1D2535; border: 1px solid #354057; border-radius: 14px; }
-            QLabel#cardEyebrow, QLabel#cardValue, QLabel#cardDetail { color: #F8FAFC; }
-            QLabel#cardEyebrow { color: #CBD5E1; font-size: 10px; font-weight: 700; }
-            QLabel#cardValue { font-size: 26px; font-weight: 800; }
-            QLabel#cardDetail { color: #CBD5E1; font-size: 11px; }
-        """)
+        self.setMinimumHeight(116)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setStyleSheet(
+            """
+            QFrame#statCard {
+                background: #1D2535;
+                border: 1px solid #354057;
+                border-radius: 14px;
+            }
+            QLabel#cardEyebrow { color: #BFC9DA; font-size: 10px; font-weight: 800; }
+            QLabel#cardValue { color: #FFFFFF; font-size: 28px; font-weight: 800; }
+            QLabel#cardDetail { color: #D6DCE7; font-size: 11px; }
+            """
+        )
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setContentsMargins(18, 14, 18, 14)
+        layout.setSpacing(4)
+
         eyebrow = QLabel(label.upper())
         eyebrow.setObjectName("cardEyebrow")
-        number = QLabel(value)
-        number.setObjectName("cardValue")
-        detail_label = QLabel(detail)
+        value_label = QLabel(value)
+        value_label.setObjectName("cardValue")
+        detail_label = QLabel(detail or "—")
         detail_label.setObjectName("cardDetail")
         detail_label.setWordWrap(True)
+        detail_label.setMinimumHeight(28)
+
         layout.addWidget(eyebrow)
-        layout.addWidget(number)
+        layout.addWidget(value_label)
         layout.addWidget(detail_label)
 
 
@@ -38,28 +62,71 @@ class HistoryView(QWidget):
         super().__init__()
         self.store = store
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+
         title = QLabel("History")
-        title.setObjectName("viewTitle")
+        title.setObjectName("historyTitle")
         subtitle = QLabel("Your recent local assistant activity")
-        subtitle.setObjectName("viewSubtitle")
+        subtitle.setObjectName("historySubtitle")
         layout.addWidget(title)
         layout.addWidget(subtitle)
+
         self.list = QListWidget()
         self.list.setObjectName("historyList")
+        self.list.setWordWrap(True)
+        self.list.setUniformItemSizes(False)
+        self.list.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.list.setStyleSheet(
+            """
+            QListWidget#historyList {
+                background: transparent;
+                border: none;
+                color: #F8FAFC;
+                outline: none;
+            }
+            QListWidget#historyList::item {
+                color: #F8FAFC;
+                background: #1A2231;
+                border: 1px solid #303A4E;
+                border-radius: 10px;
+                padding: 11px 13px;
+                margin: 4px 1px;
+            }
+            QListWidget#historyList::item:hover {
+                background: #202B3E;
+            }
+            QScrollBar:vertical {
+                width: 8px;
+                background: transparent;
+            }
+            QScrollBar::handle:vertical {
+                background: rgba(255,255,255,70);
+                border-radius: 4px;
+                min-height: 28px;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0;
+            }
+            """
+        )
         layout.addWidget(self.list, 1)
         self.refresh()
 
     def refresh(self) -> None:
         self.list.clear()
-        items = self.store.recent(30)
+        items = self.store.recent(50)
         if not items:
-            empty = QListWidgetItem("No activity yet. Start with a command from the assistant.")
+            empty = QListWidgetItem("No activity yet. Start with a command from the Assistant tab.")
             empty.setTextAlignment(Qt.AlignCenter)
             self.list.addItem(empty)
             return
+
         for item in items:
             preview = item.response.splitlines()[0] if item.response else "No response"
-            label = f"{item.command or '(empty command)'}\n{preview}\n{item.created_at.replace('T', ' ').split('+')[0]}"
+            timestamp = item.created_at.replace("T", " ").split("+")[0]
+            label = f"{item.command or '(empty command)'}\n{preview}\n{timestamp}"
             self.list.addItem(QListWidgetItem(label))
 
 
@@ -67,27 +134,30 @@ class UsageView(QWidget):
     def __init__(self, store: MemoryStore) -> None:
         super().__init__()
         self.store = store
-        self.layout = QVBoxLayout(self)
-        self.setStyleSheet("""
-            QWidget { color: #F8FAFC; }
-            QLabel#usageTitle, QLabel#usageSubtitle, QLabel#usageSection,
-            QLabel#usageModeName, QLabel#usageModeValue { color: #F8FAFC; }
-            QLabel#usageTitle { font-size: 20px; font-weight: 700; }
-            QLabel#usageSubtitle { color: #D6DCE7; font-size: 12px; }
-            QLabel#usageSection { font-size: 13px; font-weight: 700; margin-top: 10px; }
-            QLabel#usageModeName { font-size: 12px; font-weight: 700; }
-            QLabel#usageModeValue { color: #CBD5E1; font-size: 12px; font-weight: 700; }
-            QFrame#modeRow { background: #1A2231; border: 1px solid #303A4E; border-radius: 10px; }
-            QProgressBar { background: #30394B; border: none; border-radius: 4px; height: 8px; }
-            QProgressBar::chunk { background: #6D86F7; border-radius: 4px; }
-        """)
+        self.outer_layout = QVBoxLayout(self)
+        self.outer_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QFrame.NoFrame)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.scroll.setStyleSheet(
+            """
+            QScrollArea { background: transparent; border: none; }
+            QScrollBar:vertical { width: 8px; background: transparent; }
+            QScrollBar::handle:vertical { background: rgba(255,255,255,70); border-radius: 4px; min-height: 28px; }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+            """
+        )
+        self.outer_layout.addWidget(self.scroll)
         self.refresh()
 
     @staticmethod
     def _mode_label(mode: str) -> str:
         mapping = {
             "gmail": "Gmail",
-            "gmail_action": "Gmail action completed",
+            "gmail_action": "Gmail actions",
             "gmail_error": "Gmail errors",
             "gmail_setup": "Gmail setup",
             "gmail_search": "Gmail search",
@@ -101,62 +171,96 @@ class UsageView(QWidget):
         return mapping.get(mode, mode.replace("_", " ").title())
 
     def refresh(self) -> None:
-        while self.layout.count():
-            item = self.layout.takeAt(0)
-            widget = item.widget()
-            if widget:
-                widget.deleteLater()
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(2, 2, 10, 12)
+        layout.setSpacing(9)
+        content.setStyleSheet(
+            """
+            QLabel#usageTitle { color: #FFFFFF; font-size: 21px; font-weight: 800; }
+            QLabel#usageSubtitle { color: #CBD5E1; font-size: 12px; }
+            QLabel#usageSection { color: #FFFFFF; font-size: 13px; font-weight: 800; margin-top: 8px; }
+            QLabel#usageModeName { color: #FFFFFF; font-size: 12px; font-weight: 700; }
+            QLabel#usageModeValue { color: #E2E8F0; font-size: 12px; font-weight: 800; }
+            QLabel#usageEmpty { color: #B7C1D1; padding: 12px 2px; }
+            QFrame#modeRow { background: #1A2231; border: 1px solid #303A4E; border-radius: 10px; }
+            QProgressBar { background: #30394B; border: none; border-radius: 4px; height: 8px; }
+            QProgressBar::chunk { background: #6D86F7; border-radius: 4px; }
+            """
+        )
 
         total = self.store.count()
         counts = self.store.mode_counts()
-        ai_count = sum(value for mode, value in counts.items() if mode.startswith("ai:") or mode in {"error", "quota_error"})
-        # A Gmail workflow is counted only after a confirmed action has
-        # actually been executed successfully. Searches, classifications,
-        # setup attempts, confirmations, and errors do not increment it.
+        ai_count = sum(
+            value for mode, value in counts.items()
+            if mode.startswith("ai:") or mode in {"error", "quota_error"}
+        )
         gmail_count = counts.get("gmail_action", 0)
 
         title = QLabel("Usage")
         title.setObjectName("usageTitle")
         subtitle = QLabel("A quick look at how you use the assistant")
         subtitle.setObjectName("usageSubtitle")
-        self.layout.addWidget(title)
-        self.layout.addWidget(subtitle)
+        layout.addWidget(title)
+        layout.addWidget(subtitle)
+
+        quick_section = QLabel("Quick look")
+        quick_section.setObjectName("usageSection")
+        layout.addWidget(quick_section)
 
         cards = QHBoxLayout()
-        cards.addWidget(StatCard("Interactions", str(total), "Saved locally on this device"))
-        cards.addWidget(StatCard("AI responses", str(ai_count), "Requests routed through your configured provider"))
-        cards.addWidget(StatCard("Gmail actions", str(gmail_count), "Successfully completed Gmail changes"))
-        self.layout.addLayout(cards)
+        cards.setSpacing(10)
+        interaction_detail = "No interactions recorded yet" if total == 0 else "Saved locally on this device"
+        ai_detail = "No AI requests recorded yet" if ai_count == 0 else "Requests routed through your AI providers"
+        gmail_detail = "No completed Gmail changes" if gmail_count == 0 else "Successfully completed Gmail changes"
+        cards.addWidget(StatCard("Interactions", str(total), interaction_detail), 1)
+        cards.addWidget(StatCard("AI responses", str(ai_count), ai_detail), 1)
+        cards.addWidget(StatCard("Gmail actions", str(gmail_count), gmail_detail), 1)
+        layout.addLayout(cards)
 
         section = QLabel("Activity by mode")
         section.setObjectName("usageSection")
-        self.layout.addWidget(section)
+        layout.addWidget(section)
 
         if not counts:
-            empty = QLabel("No activity recorded yet.")
-            empty.setStyleSheet("color: #AAB4C4; padding: 14px 2px;")
-            self.layout.addWidget(empty)
+            empty = QLabel("No activity recorded yet. Your usage statistics will appear here as you use the assistant.")
+            empty.setObjectName("usageEmpty")
+            empty.setWordWrap(True)
+            layout.addWidget(empty)
         else:
+            total_for_percent = max(total, sum(counts.values()), 1)
             max_count = max(counts.values())
-            for mode, count in counts.items():
+            for mode, count in sorted(counts.items(), key=lambda pair: (-pair[1], pair[0])):
+                percent = (count / total_for_percent) * 100
                 row_frame = QFrame()
                 row_frame.setObjectName("modeRow")
+                row_frame.setMinimumHeight(48)
                 row = QHBoxLayout(row_frame)
-                row.setContentsMargins(12, 9, 12, 9)
+                row.setContentsMargins(12, 8, 12, 8)
+                row.setSpacing(10)
+
                 name = QLabel(self._mode_label(mode))
                 name.setObjectName("usageModeName")
                 name.setMinimumWidth(145)
+                name.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
+
                 bar = QProgressBar()
                 bar.setRange(0, max_count)
                 bar.setValue(count)
                 bar.setTextVisible(False)
-                value = QLabel(str(count))
+                bar.setMinimumWidth(120)
+                bar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+                value = QLabel(f"{count}  ·  {percent:.0f}%")
                 value.setObjectName("usageModeValue")
                 value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                value.setMinimumWidth(32)
+                value.setMinimumWidth(80)
+                value.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
+
                 row.addWidget(name)
                 row.addWidget(bar, 1)
                 row.addWidget(value)
-                self.layout.addWidget(row_frame)
+                layout.addWidget(row_frame)
 
-        self.layout.addStretch()
+        layout.addStretch(1)
+        self.scroll.setWidget(content)
