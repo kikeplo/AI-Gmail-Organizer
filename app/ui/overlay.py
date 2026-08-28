@@ -46,7 +46,6 @@ class OverlayWindow(QMainWindow):
         panel_layout = QVBoxLayout(panel)
         panel_layout.setContentsMargins(24, 20, 24, 20)
         panel_layout.setSpacing(14)
-
         header = QHBoxLayout()
         title_block = QVBoxLayout()
         title_block.setSpacing(2)
@@ -81,7 +80,6 @@ class OverlayWindow(QMainWindow):
         header.addSpacing(4)
         header.addWidget(close)
         panel_layout.addLayout(header)
-
         self.tabs = QTabWidget()
         self.tabs.setObjectName("mainTabs")
         self.chat_page = self._build_chat_page()
@@ -93,7 +91,6 @@ class OverlayWindow(QMainWindow):
         self.tabs.currentChanged.connect(self._refresh_dashboard)
         panel_layout.addWidget(self.tabs, 1)
         layout.addWidget(panel)
-
         self.setStyleSheet("""
             QWidget#root { background: transparent; }
             QFrame#panel { background: rgba(18,22,32,250); border: 1px solid rgba(255,255,255,30); border-radius: 24px; }
@@ -246,12 +243,18 @@ class OverlayWindow(QMainWindow):
 
     def _open_settings(self) -> None:
         dialog = SetupDialog(self)
-        dialog.exec()
-        self._agent = CommandAgent()
-        self._memory = MemoryStore()
+        if dialog.exec() == QDialog.Accepted:
+            # Re-read the saved environment and recreate the agent so the
+            # currently running EXE immediately uses the new provider/key.
+            from dotenv import load_dotenv
+            from app.config.user_settings import ENV_FILE
+            load_dotenv(ENV_FILE, override=True)
+            self._agent = CommandAgent()
+            self._add_message("assistant", "Settings updated. The new AI provider is active now — no restart required.")
+        else:
+            self._add_message("assistant", "Settings were not changed.")
         self.history_view.store = self._memory
         self.usage_view.store = self._memory
-        self._add_message("assistant", "Settings updated. New commands will use the current configuration.")
 
     def mousePressEvent(self, event) -> None:  # type: ignore[override]
         if event.button() == Qt.LeftButton:
