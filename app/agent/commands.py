@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import os
 import re
 
+from app.ai.classifier import InboxClassifier
 from app.gmail.client import GmailClient
 
 
@@ -24,6 +25,7 @@ class CommandAgent:
         self.model = os.getenv("OPENAI_MODEL", "gpt-5.6-luna")
         self.api_key = os.getenv("OPENAI_API_KEY")
         self.gmail = gmail or GmailClient()
+        self.classifier = InboxClassifier()
 
     def respond(self, command: str) -> AgentResponse:
         command = command.strip()
@@ -31,6 +33,8 @@ class CommandAgent:
             return AgentResponse("Please enter a command.")
 
         lowered = command.lower()
+        if self._looks_like_inbox_organization(lowered):
+            return self._handle_inbox_organization()
         if self._looks_like_gmail_search(lowered):
             return self._handle_gmail_search(command)
 
@@ -48,8 +52,9 @@ class CommandAgent:
                         "role": "system",
                         "content": (
                             "You are the AI Gmail Organizer desktop assistant. "
-                            "Gmail read-only search is available. Do not claim external "
-                            "actions were executed unless the application explicitly reports them."
+                            "Gmail read-only search and inbox classification are available. "
+                            "Do not claim external actions were executed unless the application "
+                            "explicitly reports them."
                         ),
                     },
                     {"role": "user", "content": command},
@@ -57,9 +62,11 @@ class CommandAgent:
             )
             return AgentResponse(response.output_text, mode="openai")
         except Exception as exc:  # pragma: no cover - external service dependent
-            return AgentResponse(
-                f"The AI provider could not be reached.\n\n{exc}", mode="error"
-            )
+            return AgentResponse(f"The AI provider could not be reached.\n\n{exc}", mode="error")
+
+    @staticmethod
+    def _looks_like_inbox_organization(text: str) -> bool:
+        return any(word in text for word in ("organize", "categorize", "categorise", "classify", "summarize", "analyse", "analyze")) and "inbox" in text
 
     @staticmethod
     def _looks_like_gmail_search(text: str) -> bool:
@@ -67,17 +74,35 @@ class CommandAgent:
             word in text for word in ("show", "find", "search", "list", "unread", "recent")
         )
 
+    def _connect(self) -> AgentResponse | None:
+        if self.gmail.is_connected:
+            return None
+        try:
+            self.gmail.connect()
+        except Exception as exc:
+            return AgentResponse(
+                "Gmail is not connected yet.\n\n"
+                f"Connection setup: {exc}\n\n"
+                "Once credentials.json is configured, run the command again.",
+                mode="gmail_setup",
+            )
+        return None
+
+    def _handle_inbox_organization(self) -> AgentResponse:
+        connection_error = self._connect()
+        if connection_error:
+            return connection_error
+        try:
+            messages = self.gmail.list_messages(query="", max_results=20)
+            classified = self.classifier.classify(messages)
+            return AgentResponse(self.classifier.summarize(classified), mode="classification")
+        except Exception as exc:
+            return AgentResponse(f"Inbox analysis failed.\n\n{exc}", mode="gmail_error")
+
     def _handle_gmail_search(self, command: str) -> AgentResponse:
-        if not self.gmail.is_connected:
-            try:
-                self.gmail.connect()
-            except Exception as exc:
-                return AgentResponse(
-                    "Gmail is not connected yet.\n\n"
-                    f"Connection setup: {exc}\n\n"
-                    "Once credentials.json is configured, run the command again.",
-                    mode="gmail_setup",
-                )
+        connection_error = self._connect()
+        if connection_error:
+            return connection_error
 
         query = self._to_gmail_query(command)
         try:
@@ -112,6 +137,6 @@ class CommandAgent:
     def _local_response(command: str) -> str:
         return (
             "Demo mode is active. Add OPENAI_API_KEY for general AI commands, "
-            "or configure Gmail OAuth to search your inbox.\n\n"
+            "or configure Gmail OAuth to search and classify your inbox.\n\n"
             f"Received: {command}"
         )
