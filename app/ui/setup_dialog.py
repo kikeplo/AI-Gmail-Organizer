@@ -1,19 +1,28 @@
-"""First-run configuration dialog."""
+"""First-run and application settings dialog."""
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QDialog, QFileDialog, QFormLayout, QHBoxLayout, QLineEdit, QMessageBox, QPushButton, QVBoxLayout
+from PySide6.QtWidgets import (
+    QDialog, QFileDialog, QFormLayout, QHBoxLayout, QLineEdit,
+    QMessageBox, QPushButton, QVBoxLayout,
+)
 
-from app.config.user_settings import CREDENTIALS_FILE, install_google_credentials, read_config, save_api_key, save_model
+from app.config.user_settings import (
+    CREDENTIALS_FILE,
+    install_google_credentials,
+    read_config,
+    save_api_key,
+    save_model,
+)
 
 
 class SetupDialog(QDialog):
-    """Collect optional per-user settings without placing secrets in the project."""
+    """Collect and edit per-user application settings."""
 
-    def __init__(self) -> None:
-        super().__init__()
-        self.setWindowTitle("AI Gmail Organizer — Setup")
-        self.setMinimumWidth(560)
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("AI Gmail Organizer — Settings")
+        self.setMinimumWidth(600)
 
         config = read_config()
         layout = QVBoxLayout(self)
@@ -39,18 +48,35 @@ class SetupDialog(QDialog):
         form.addRow("Gmail OAuth", oauth_row)
         layout.addLayout(form)
 
+        note = QLineEdit("Settings are stored for this Windows user. They are not part of the GitHub project.")
+        note.setReadOnly(True)
+        note.setObjectName("settingsNote")
+        layout.addWidget(note)
+
         button_row = QHBoxLayout()
         save = QPushButton("Save")
         save.clicked.connect(self._save)
         cancel = QPushButton("Cancel")
-        cancel.clicked.connect(self.reject)
+        cancel.clicked.connect(self._cancel)
         button_row.addStretch()
         button_row.addWidget(cancel)
         button_row.addWidget(save)
         layout.addLayout(button_row)
 
+        self.setStyleSheet("""
+            QDialog { background: #121620; color: #F1F5F9; }
+            QLabel { color: #E3E8F0; }
+            QLineEdit { color: #F7F8FA; background: #202738; border: 1px solid #3A4356; border-radius: 8px; padding: 9px; }
+            QLineEdit:focus { border-color: #6D86F7; }
+            QPushButton { color: #F7F8FA; background: #2A3346; border: 1px solid #46516A; border-radius: 8px; padding: 9px 14px; }
+            QPushButton:hover { background: #35415B; }
+            #settingsNote { color: #AAB4C4; background: transparent; border: none; }
+        """)
+
     def _choose_credentials(self) -> None:
-        source, _ = QFileDialog.getOpenFileName(self, "Select Google OAuth client JSON", "", "JSON files (*.json)")
+        source, _ = QFileDialog.getOpenFileName(
+            self, "Select Google OAuth client JSON", "", "JSON files (*.json)"
+        )
         if not source:
             return
         try:
@@ -67,3 +93,11 @@ class SetupDialog(QDialog):
             QMessageBox.critical(self, "Could not save settings", str(exc))
             return
         self.accept()
+
+    def _cancel(self) -> None:
+        QMessageBox.information(
+            self,
+            "Setup not completed",
+            "No settings were saved. You can open Settings again from the main window at any time.",
+        )
+        self.reject()
