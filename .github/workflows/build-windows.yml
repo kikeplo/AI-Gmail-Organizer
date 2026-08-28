@@ -45,6 +45,7 @@ jobs:
       - name: Build portable application folder
         shell: pwsh
         run: |
+          $env:GITHUB_ACTIONS = 'true'
           powershell -ExecutionPolicy Bypass -File packaging\build_portable_windows.ps1
 
       - name: Verify packaged runtime
@@ -59,7 +60,12 @@ jobs:
           Write-Host "Verified portable app folder: $appDir"
           Write-Host "Verified launcher: $exe"
           Write-Host "Verified Chromium: $($chrome.FullName)"
-          Write-Host 'Python automation dependencies are bundled inside the PyInstaller application archive; they are intentionally not expected as loose files.'
+          Write-Host 'Python automation dependencies are bundled inside the PyInstaller application archive; they are not expected as loose files.'
+
+      - name: Run packaged smoke test
+        shell: pwsh
+        run: |
+          python packaging\smoke_test_windows.py
 
       - name: Create ZIP
         shell: pwsh
