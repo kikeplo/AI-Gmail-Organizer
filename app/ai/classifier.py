@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import json
 import os
 
+from app.ai.provider import AIProvider, AIProviderError
 from app.gmail.client import GmailMessage
 
 CATEGORIES = ("important", "work", "personal", "promotions", "newsletters", "other")
@@ -20,37 +20,18 @@ class ClassifiedMessage:
 
 
 class InboxClassifier:
-    """Classify inbox messages with an OpenAI-compatible provider when configured."""
+    """Classify inbox messages through the configured AI provider."""
 
     def __init__(self) -> None:
-        self.model = os.getenv("OPENAI_MODEL", "").strip()
-        self.api_key = os.getenv("OPENAI_API_KEY", "").strip()
-        self.base_url = os.getenv("OPENAI_BASE_URL", "").strip() or None
-        self.provider = os.getenv("AI_PROVIDER", "OpenAI-compatible").strip() or "OpenAI-compatible"
-
-    def _client(self):
-        from openai import OpenAI
-        return OpenAI(api_key=self.api_key or "not-required", **({"base_url": self.base_url} if self.base_url else {}))
-
-    def _resolve_model(self, client) -> str:
-        if self.model:
-            return self.model
-        models = client.models.list()
-        data = getattr(models, "data", None) or []
-        if not data:
-            raise RuntimeError("The provider did not return any models. Enter a model name in Settings, or use a provider that exposes /models.")
-        model_id = getattr(data[0], "id", None)
-        if not model_id:
-            raise RuntimeError("The provider returned an invalid model list.")
-        return str(model_id)
+        self.provider = AIProvider()
 
     def classify(self, messages: list[GmailMessage]) -> list[ClassifiedMessage]:
         if not messages:
             return []
-        if self.api_key or self.base_url:
+        if self.provider.configured:
             try:
                 return self._classify_with_ai(messages)
-            except Exception:
+            except AIProviderError:
                 return [self._local_classification(message) for message in messages]
         return [self._local_classification(message) for message in messages]
 
@@ -72,23 +53,23 @@ class InboxClassifier:
 
     def _classify_with_ai(self, messages: list[GmailMessage]) -> list[ClassifiedMessage]:
         payload = [{"id": m.id, "sender": m.sender, "subject": m.subject, "snippet": m.snippet} for m in messages]
-        client = self._client()
-        response = client.chat.completions.create(
-            model=self._resolve_model(client),
-            messages=[
-                {"role": "system", "content": "Classify each email into exactly one category: important, work, personal, promotions, newsletters, or other. Return JSON only as an array of objects with id, category, confidence, reason."},
-                {"role": "user", "content": json.dumps(payload)},
-            ],
+        system = (
+            "Classify each email into exactly one category: important, work, personal, promotions, "
+            "newsletters, or other. Return JSON only as an array of objects with id, category, confidence, reason."
         )
-        content = response.choices[0].message.content or "[]"
-        results = {item["id"]: item for item in json.loads(content)}
+        items = self.provider.classify_json(payload, system)
+        results = {item["id"]: item for item in items if isinstance(item, dict) and "id" in item}
         classified: list[ClassifiedMessage] = []
         for message in messages:
             item = results.get(message.id, {})
             category = item.get("category", "other")
             if category not in CATEGORIES:
                 category = "other"
-            classified.append(ClassifiedMessage(message, category, float(item.get("confidence", 0.5)), str(item.get("reason", "No explanation provided."))))
+            try:
+                confidence = float(item.get("confidence", 0.5))
+            except (TypeError, ValueError):
+                confidence = 0.5
+            classified.append(ClassifiedMessage(message, category, confidence, str(item.get("reason", "No explanation provided."))))
         return classified
 
     @staticmethod
