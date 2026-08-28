@@ -1,4 +1,4 @@
-"""Command routing for the AI Gmail Organizer v0.5."""
+"""Command routing for the AI Gmail Organizer v0.6."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import re
 from app.ai.classifier import InboxClassifier
 from app.gmail.action_service import GmailActionService
 from app.gmail.client import GmailClient
+from app.windows.action_router import WindowsActionRouter
 
 
 @dataclass(frozen=True)
@@ -19,7 +20,7 @@ class AgentResponse:
 
 
 class CommandAgent:
-    """Route Gmail searches, classifications, and confirmed mutations."""
+    """Route Gmail and Windows commands while preserving action boundaries."""
 
     def __init__(self, gmail: GmailClient | None = None) -> None:
         self.model = os.getenv("OPENAI_MODEL", "gpt-5.6-luna")
@@ -27,13 +28,19 @@ class CommandAgent:
         self.gmail = gmail or GmailClient()
         self.classifier = InboxClassifier()
         self.actions = GmailActionService(self.gmail)
+        self.windows = WindowsActionRouter()
 
     def respond(self, command: str) -> AgentResponse:
         command = command.strip()
         if not command:
             return AgentResponse("Please enter a command.")
 
-        lowered = command.lower()
+        lowered = command.casefold()
+
+        windows_response = self.windows.handle(command)
+        if windows_response is not None:
+            return AgentResponse(windows_response.text, mode=windows_response.mode)
+
         if self._looks_like_mutation(lowered):
             return self._plan_mutation(command)
         if self._looks_like_inbox_organization(lowered):
@@ -54,8 +61,8 @@ class CommandAgent:
                         "role": "system",
                         "content": (
                             "You are the AI Gmail Organizer desktop assistant. "
-                            "Gmail search, classification, label, and archive capabilities exist. "
-                            "Never claim a Gmail mutation happened unless the application explicitly confirms it."
+                            "Gmail search, classification, label, archive, and Windows window tools exist. "
+                            "Never claim an external action happened unless the application explicitly reports it."
                         ),
                     },
                     {"role": "user", "content": command},
@@ -90,21 +97,14 @@ class CommandAgent:
             return AgentResponse("No messages matched the request, so there is nothing to change.", mode="gmail")
 
         ids = [message.id for message in messages]
-        if "archive" in command.lower():
+        if "archive" in command.casefold():
             action = self.actions.plan_archive(ids)
         else:
             match = re.search(r"(?:label|move to)\s+['\"]?([^'\"]+)['\"]?$", command, flags=re.IGNORECASE)
             label_name = match.group(1).strip() if match else "Organized"
             action = self.actions.plan_label(ids, label_name)
 
-        preview = [
-            "⚠️ Confirmation required",
-            "",
-            action.description,
-            "",
-            "Nothing has been changed yet.",
-            "Confirm this action from the application before execution.",
-        ]
+        preview = ["⚠️ Confirmation required", "", action.description, "", "Nothing has been changed yet.", "Confirm this action from the application before execution."]
         return AgentResponse("\n".join(preview), mode="confirmation", pending_action=action)
 
     def confirm_action(self, action: object, confirmed: bool) -> AgentResponse:
@@ -151,7 +151,7 @@ class CommandAgent:
 
     @staticmethod
     def _to_gmail_query(command: str) -> str:
-        text = command.lower()
+        text = command.casefold()
         queries: list[str] = []
         if "unread" in text:
             queries.append("is:unread")
