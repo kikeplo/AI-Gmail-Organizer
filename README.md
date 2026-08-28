@@ -2,9 +2,9 @@
 
 AI-powered Windows desktop assistant for intelligent Gmail organization and productivity automation.
 
-## v0.5 — confirmed Gmail actions
+## v0.6 — Windows automation
 
-v0.5 moves beyond read-only inbox analysis. The application can now plan Gmail mutations such as archiving messages and applying labels, then requires explicit user confirmation before executing them.
+v0.6 adds a Windows automation layer to the existing Gmail assistant. The application can inspect the active desktop window and perform a small set of explicit window-management actions through structured tools.
 
 ### Current capabilities
 
@@ -13,24 +13,27 @@ v0.5 moves beyond read-only inbox analysis. The application can now plan Gmail m
 - Gmail OAuth 2.0 desktop authentication
 - Gmail search and inbox retrieval
 - AI or local-rule email classification
-- Categories: important, work, personal, promotions, newsletters, other
 - Archive Gmail messages
 - Create/find and apply Gmail labels
 - Explicit confirmation dialog before every Gmail mutation
-- Cancellation path that leaves Gmail unchanged
-- Local credential/token protection through `.gitignore`
+- Windows active-window inspection
+- Windows minimize, maximize, and restore actions
+- Safe executable launching helper without shell command strings
+- Platform guard so Windows-only tools fail clearly elsewhere
 - Automated tests
 
 ### Example commands
 
 ```text
-Organize my inbox
+What window is active?
+Minimize the active window
+Maximize the active window
+Restore the active window
 Find my unread Gmail emails
 Archive my unread Gmail emails
-Label my unread Gmail emails Work
 ```
 
-For mutating commands, the app first shows what will happen. Gmail is only changed after the user selects **Yes** in the confirmation dialog.
+Gmail mutations still require explicit confirmation. Windows window-management commands in v0.6 are limited to the supported operations above.
 
 ### Google Cloud setup
 
@@ -40,7 +43,7 @@ For mutating commands, the app first shows what will happen. Gmail is only chang
 4. Run the application and issue a Gmail command.
 5. Complete Google's browser-based authorization. The app stores the local token in `token.json`.
 
-For v0.5 the OAuth scope includes `gmail.modify`, which is required for label and archive operations.
+For the Gmail mutation features, the OAuth scope includes `gmail.modify`.
 
 **Never commit `credentials.json` or `token.json`.** They are ignored by `.gitignore`.
 
@@ -53,17 +56,16 @@ OPENAI_API_KEY=your_key_here
 OPENAI_MODEL=gpt-5.6-luna
 ```
 
-Without an AI key, the deterministic command path remains available for supported Gmail operations.
+Without an AI key, supported Gmail and Windows intents still use deterministic routing.
 
 ## Roadmap
 
-- **v0.6:** Windows automation tools
 - **v0.7:** Persistent local memory and analytics
 - **v1.0:** Polished desktop assistant with Gmail + Windows workflows
 
 ## Tech stack
 
-Python · PySide6 · OpenAI Responses API · Gmail API · Google OAuth 2.0 · pytest
+Python · PySide6 · OpenAI Responses API · Gmail API · Google OAuth 2.0 · pywin32 · pytest
 
 ## Run locally
 
