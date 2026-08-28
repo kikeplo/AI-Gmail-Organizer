@@ -52,6 +52,12 @@ def save_local_ai(enabled: bool, base_url: str, model: str) -> None:
     set_key(str(ENV_FILE), "LOCAL_AI_MODEL", model.strip())
 
 
+def save_browser_settings(mode: str, cdp_url: str, profile_dir: str) -> None:
+    set_key(str(ENV_FILE), "BROWSER_MODE", mode.strip().lower())
+    set_key(str(ENV_FILE), "BROWSER_CDP_URL", cdp_url.strip())
+    set_key(str(ENV_FILE), "BROWSER_USER_DATA_DIR", profile_dir.strip())
+
+
 def install_google_credentials(source: str | Path) -> Path:
     source_path = Path(source)
     if not source_path.exists() or source_path.suffix.lower() != ".json":
