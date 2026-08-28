@@ -1,8 +1,7 @@
 """Optional local AI engine for lightweight offline tasks.
 
 Uses a local Ollama-compatible HTTP endpoint when available. The engine is
-intentionally independent from the cloud provider so the app can use local AI
-for cheap/simple tasks and fall back to the configured cloud provider.
+independent from the cloud provider so simple tasks can stay local and cheap.
 """
 
 from __future__ import annotations
@@ -23,30 +22,34 @@ class LocalAIEngine:
         self.model = os.getenv("LOCAL_AI_MODEL", "").strip()
         self.enabled = os.getenv("LOCAL_AI_ENABLED", "1").strip().lower() not in {"0", "false", "no", "off"}
 
-    def available(self) -> bool:
+    def status(self) -> dict[str, object]:
         if not self.enabled:
-            return False
+            return {"enabled": False, "available": False, "models": [], "model": self.model, "reason": "Local AI is disabled."}
         try:
-            self._request("GET", f"{self.base_url}/models")
-            return True
-        except Exception:
-            return False
+            models = self.list_models()
+            selected = self.model if self.model in models else (models[0] if models else "")
+            return {"enabled": True, "available": bool(models), "models": models, "model": selected, "reason": "Local AI is ready." if models else "No local models installed."}
+        except Exception as exc:
+            return {"enabled": True, "available": False, "models": [], "model": self.model, "reason": str(exc)}
+
+    def available(self) -> bool:
+        return bool(self.status()["available"])
 
     def list_models(self) -> list[str]:
         data = self._request("GET", f"{self.base_url}/models")
-        models = []
+        models: list[str] = []
         for item in data.get("data", []):
             if isinstance(item, dict) and item.get("id"):
                 models.append(str(item["id"]))
         if not models:
-            raise LocalAIError("No local AI models were found. Install/download a model in your local AI runtime first.")
+            raise LocalAIError("No local AI models were found. Install a model in your local AI runtime first.")
         return models
 
     def resolve_model(self) -> str:
-        if self.model:
-            return self.model
         models = self.list_models()
-        blocked = ("embedding", "moderation", "image", "audio")
+        if self.model and self.model in models:
+            return self.model
+        blocked = ("embedding", "moderation", "image", "audio", "tts", "whisper")
         for model in models:
             if not any(token in model.lower() for token in blocked):
                 return model
