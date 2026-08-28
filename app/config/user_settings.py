@@ -34,6 +34,14 @@ def save_model(model: str) -> None:
     set_key(str(ENV_FILE), "OPENAI_MODEL", model.strip())
 
 
+def save_base_url(base_url: str) -> None:
+    set_key(str(ENV_FILE), "OPENAI_BASE_URL", base_url.strip().rstrip("/"))
+
+
+def save_provider_name(provider: str) -> None:
+    set_key(str(ENV_FILE), "AI_PROVIDER", provider.strip())
+
+
 def install_google_credentials(source: str | Path) -> Path:
     source_path = Path(source)
     if not source_path.exists() or source_path.suffix.lower() != ".json":
