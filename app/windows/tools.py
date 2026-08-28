@@ -19,7 +19,7 @@ class ActiveWindow:
 
 
 class WindowsTools:
-    """Windows automation surface for windows, apps, mouse, keyboard, and foreground tracking."""
+    """Windows automation surface for apps, windows, mouse, keyboard, and foreground tracking."""
 
     APP_ALIASES = {
         "chrome": ("chrome", "chrome.exe"),
@@ -38,11 +38,9 @@ class WindowsTools:
         self._last_external: ActiveWindow | None = None
 
     def set_own_window(self, hwnd: int | None) -> None:
-        """Tell the tracker which window belongs to the Organizer overlay."""
         self._own_hwnd = hwnd
 
     def update_last_external_window(self) -> ActiveWindow | None:
-        """Capture the current foreground window unless it belongs to this app."""
         current = self._read_foreground_window()
         if current is None:
             return self._last_external
@@ -57,9 +55,7 @@ class WindowsTools:
         if os.name != "nt":
             raise OSError("Windows automation is only available on Windows.")
         if external:
-            last = self.update_last_external_window()
-            if last is not None:
-                return last
+            return self.get_last_external_window()
         current = self._read_foreground_window()
         if current is None:
             raise OSError("Could not determine the foreground window.")
@@ -68,17 +64,12 @@ class WindowsTools:
     def get_last_external_window(self) -> ActiveWindow:
         last = self.update_last_external_window()
         if last is None:
-            raise OSError("No external application window has been observed yet.")
+            raise OSError("No external application window has been observed yet. Open or focus another app first.")
         return last
 
-    def minimize_active_window(self):
-        self._set_window_state("minimize")
-
-    def maximize_active_window(self):
-        self._set_window_state("maximize")
-
-    def restore_active_window(self):
-        self._set_window_state("restore")
+    def minimize_active_window(self): self._set_window_state("minimize")
+    def maximize_active_window(self): self._set_window_state("maximize")
+    def restore_active_window(self): self._set_window_state("restore")
 
     def move_mouse(self, x: int, y: int, duration: float = 0.2):
         if os.name != "nt": raise OSError("Windows automation is only available on Windows.")
@@ -136,7 +127,18 @@ class WindowsTools:
             os.startfile(target); return
         subprocess.Popen([target, *args], shell=False)
 
-    def launch_named_application(self, name: str) -> str:
+    def launch_application_as_admin(self, executable: str, args: Sequence[str] = ()):
+        """Explicitly request Windows UAC elevation for an application."""
+        if os.name != "nt": raise OSError("Windows elevation is only available on Windows.")
+        import ctypes
+        target = executable.strip()
+        if not target: raise ValueError("Application name cannot be empty.")
+        params = " ".join(self._quote_windows_arg(arg) for arg in args)
+        result = ctypes.windll.shell32.ShellExecuteW(None, "runas", target, params or None, None, 1)
+        if result <= 32:
+            raise OSError(f"Windows could not start the application with administrator privileges (code {result}).")
+
+    def launch_named_application(self, name: str, as_admin: bool = False) -> str:
         if os.name != "nt": raise OSError("Windows automation is only available on Windows.")
         query = name.casefold().strip()
         candidates = self.APP_ALIASES.get(query)
@@ -150,16 +152,26 @@ class WindowsTools:
         for target in candidates:
             try:
                 if target.endswith(":") or target.startswith("ms-"):
+                    if as_admin:
+                        raise OSError("This app uses a Windows protocol and cannot be elevated by this launcher.")
                     os.startfile(target)
                 else:
-                    try: subprocess.Popen([target], shell=False)
-                    except FileNotFoundError:
-                        os.startfile(target)
-                time.sleep(0.15)
+                    if as_admin:
+                        self.launch_application_as_admin(target)
+                    else:
+                        try: subprocess.Popen([target], shell=False)
+                        except FileNotFoundError: os.startfile(target)
+                time.sleep(0.25)
                 self.update_last_external_window()
-                return f"Opened {name}."
+                return f"Opened {name}{' with administrator privileges' if as_admin else ''}."
             except Exception as exc: last_error = exc
         raise FileNotFoundError(f"Could not open {name}. {last_error}")
+
+    @staticmethod
+    def _quote_windows_arg(value: str) -> str:
+        if not value or any(ch.isspace() for ch in value) or '"' in value:
+            return '"' + value.replace('"', '\\"') + '"'
+        return value
 
     @staticmethod
     def _is_organizer_process(executable: str) -> bool:
