@@ -26,6 +26,8 @@ class CommandAgent:
     def __init__(self, gmail: GmailClient | None = None, memory: MemoryStore | None = None) -> None:
         self.model = os.getenv("OPENAI_MODEL")
         self.api_key = os.getenv("OPENAI_API_KEY")
+        self.base_url = os.getenv("OPENAI_BASE_URL", "").strip() or None
+        self.provider = os.getenv("AI_PROVIDER", "OpenAI").strip() or "OpenAI"
         self.gmail = gmail or GmailClient()
         self.classifier = InboxClassifier()
         self.actions = GmailActionService(self.gmail)
@@ -62,10 +64,16 @@ class CommandAgent:
         self.memory.remember(command, response.text, response.mode)
         return response
 
+    def _client(self):
+        from openai import OpenAI
+        kwargs = {"api_key": self.api_key}
+        if self.base_url:
+            kwargs["base_url"] = self.base_url
+        return OpenAI(**kwargs)
+
     def _ask_ai(self, command: str) -> AgentResponse:
         try:
-            from openai import OpenAI
-            client = OpenAI(api_key=self.api_key)
+            client = self._client()
             response = client.responses.create(
                 model=self.model,
                 input=[
@@ -81,17 +89,22 @@ class CommandAgent:
                     {"role": "user", "content": command},
                 ],
             )
-            return AgentResponse(response.output_text, mode="openai")
+            return AgentResponse(response.output_text, mode=f"ai:{self.provider}")
         except Exception as exc:  # pragma: no cover
             message = str(exc)
             lowered = message.casefold()
             if "429" in lowered or "insufficient_quota" in lowered or "credit_balance_exhausted" in lowered:
                 return AgentResponse(
-                    "The AI provider is unavailable because the API account has no remaining credits.\n\n"
-                    "Add API credits or switch to a different provider/configuration, then try again.",
+                    f"The {self.provider} provider rejected the request because its quota/credits are exhausted.\n\n"
+                    "Check the provider account or switch provider, API base URL, or model in Settings.\n\n"
+                    f"Provider: {self.provider}\nModel: {self.model}",
                     mode="quota_error",
                 )
-            return AgentResponse("The AI provider could not be reached.\n\n" + message, mode="error")
+            return AgentResponse(
+                f"The {self.provider} AI provider could not complete the request.\n\n{message}\n\n"
+                "Check the API key, API base URL, and model in Settings.",
+                mode="error",
+            )
 
     def _handle_memory_query(self, text: str) -> AgentResponse | None:
         if "history" in text or "remember" in text or "what did i ask" in text:
