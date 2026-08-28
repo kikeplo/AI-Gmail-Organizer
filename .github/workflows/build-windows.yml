@@ -52,15 +52,14 @@ jobs:
         run: |
           $appDir = Join-Path $env:GITHUB_WORKSPACE 'dist\AI-Gmail-Organizer'
           $exe = Join-Path $appDir 'AI-Gmail-Organizer.exe'
+          if (-not (Test-Path $appDir)) { throw "Missing application folder: $appDir" }
           if (-not (Test-Path $exe)) { throw "Missing EXE: $exe" }
           $chrome = Get-ChildItem -Path $appDir -Recurse -Filter 'chrome.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $chrome) { throw 'Bundled Chromium was not found.' }
-          foreach ($marker in @('pyautogui','pywinauto','pyscreeze')) {
-            $found = Get-ChildItem -Path $appDir -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match $marker } | Select-Object -First 1
-            if (-not $found) { throw "Packaged automation component not found: $marker" }
-          }
-          Write-Host "Verified EXE: $exe"
+          Write-Host "Verified portable app folder: $appDir"
+          Write-Host "Verified launcher: $exe"
           Write-Host "Verified Chromium: $($chrome.FullName)"
+          Write-Host 'Python automation dependencies are bundled inside the PyInstaller application archive; they are intentionally not expected as loose files.'
 
       - name: Create ZIP
         shell: pwsh
