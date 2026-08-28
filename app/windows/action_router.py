@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import os
 import re
 
 from app.windows.tools import ActiveWindow, WindowsTools
@@ -17,28 +16,27 @@ class WindowActionResponse:
 
 
 class WindowsActionRouter:
-    """Translate desktop requests into semantic UI automation, app launch, or low-level input."""
+    """Translate desktop requests into app launch, semantic UI, or low-level input."""
 
     def __init__(self, tools: WindowsTools | None = None, ui: WindowsUIAutomation | None = None) -> None:
         self.tools = tools or WindowsTools()
         self.ui = ui or WindowsUIAutomation()
+
+    def set_own_window(self, hwnd: int | None) -> None:
+        self.tools.set_own_window(hwnd)
 
     def handle(self, command: str) -> WindowActionResponse | None:
         text = command.casefold().strip()
         if not self._is_windows_intent(text):
             return None
         try:
-            # Desktop app requests should never be routed to the browser agent just because
-            # the application name is “Chrome”, “Teams”, etc. Prefer the direct Windows
-            # launcher for known installed applications.
+            if any(term in text for term in ("what window", "active window", "focused window", "which window")):
+                return WindowActionResponse(self._describe_active_window(self.tools.get_last_external_window()), mode="windows_active_window")
+
             desktop_app = self._desktop_app_target(command)
             if desktop_app:
-                try:
-                    message = self.tools.launch_named_application(desktop_app)
-                    return WindowActionResponse(message, mode="windows_app_launch")
-                except Exception:
-                    # If direct launching is unavailable, continue to semantic UI automation.
-                    pass
+                message = self.tools.launch_named_application(desktop_app)
+                return WindowActionResponse(message, mode="windows_app_launch")
 
             try:
                 semantic = self._semantic_click_target(command)
@@ -46,12 +44,8 @@ class WindowsActionRouter:
                     element = self.ui.click(semantic)
                     return WindowActionResponse(f"Clicked '{element.name}' using Windows UI Automation.", mode="windows_ui_action")
             except UIAutomationError:
-                # Continue to deterministic desktop controls. The packaged application may
-                # not have UI Automation available, but mouse/keyboard control can still work.
                 pass
 
-            if any(term in text for term in ("what window", "active window", "focused window", "which window")):
-                return WindowActionResponse(self._describe_active_window(self.tools.get_active_window()))
             if "double click" in text or "double-click" in text:
                 point = self._coordinates(text); self.tools.double_click(*point) if point else self.tools.double_click(); return WindowActionResponse("Double-click completed.", mode="windows_action")
             if "right click" in text or "right-click" in text:
@@ -83,19 +77,23 @@ class WindowsActionRouter:
     @staticmethod
     def _desktop_app_target(command: str) -> str | None:
         text = command.casefold().strip()
-        if not any(term in text for term in ("on my desktop", "on the desktop", "desktop icon", "desktop app", "taskbar")):
-            return None
         match = re.search(r"(?:click|double-click|double click|open|launch|start)\s+(?:the\s+)?(.+?)(?:\s+(?:icon|app|application))?(?:\s+on my desktop|\s+on the desktop|\s+desktop icon|\s+from the taskbar)?$", text)
         if not match:
             return None
         target = re.sub(r"[^a-z0-9 ]+", " ", match.group(1)).strip()
-        aliases = {"chrome": "chrome", "google chrome": "chrome", "microsoft teams": "microsoft teams", "teams": "teams", "calculator": "calculator", "calc": "calc", "notepad": "notepad", "file explorer": "file explorer", "explorer": "explorer", "settings": "settings"}
+        aliases = {
+            "chrome": "chrome", "google chrome": "chrome",
+            "microsoft teams": "microsoft teams", "teams": "teams",
+            "calculator": "calculator", "calc": "calc",
+            "notepad": "notepad", "file explorer": "file explorer",
+            "explorer": "explorer", "settings": "settings",
+        }
         return aliases.get(target)
 
     @staticmethod
     def _semantic_click_target(command: str) -> str | None:
         text = command.strip()
-        match = re.search(r"(?:click|press|select|open)\s+(?:the\s+)?(?:button|tab|link|menu item|item)?\s*[\"']?([^\"']+?)[\"']?$", text, re.IGNORECASE)
+        match = re.search(r"(?:click|press|select)\s+(?:the\s+)?(?:button|tab|link|menu item|item)?\s*[\"']?([^\"']+?)[\"']?$", text, re.IGNORECASE)
         if not match: return None
         target = match.group(1).strip()
         if not target or re.search(r"\d+\s*[, ]\s*\d+", target): return None
