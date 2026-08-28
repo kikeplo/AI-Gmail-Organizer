@@ -23,8 +23,6 @@ for package in ('pyautogui', 'pyscreeze', 'PIL', 'pywinauto', 'playwright'):
     except Exception:
         pass
 
-# The build script places Playwright's Chromium runtime in .playwright.
-# In onedir mode it becomes a sibling folder of the EXE under dist/AI-Gmail-Organizer.
 playwright_local = project_root / '.playwright'
 if playwright_local.exists():
     datas.append((str(playwright_local), 'playwright'))
@@ -38,7 +36,7 @@ a = Analysis(
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=[str(project_root / 'packaging' / 'runtime_hook.py')],
     excludes=[],
     noarchive=False,
 )
