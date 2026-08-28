@@ -2,8 +2,16 @@
 # User-specific credentials and configuration are intentionally not bundled.
 
 from pathlib import Path
+from PyInstaller.utils.hooks import collect_submodules
 
 project_root = Path(SPECPATH).resolve().parent
+
+hiddenimports = [
+    'win32api', 'win32con', 'win32gui', 'win32process',
+    'comtypes', 'comtypes.client',
+]
+hiddenimports += collect_submodules('pywinauto')
+hiddenimports += collect_submodules('playwright')
 
 
 a = Analysis(
@@ -11,13 +19,7 @@ a = Analysis(
     pathex=[str(project_root)],
     binaries=[],
     datas=[],
-    hiddenimports=[
-        'win32api', 'win32con', 'win32gui', 'win32process',
-        'pywinauto', 'pywinauto.application', 'pywinauto.desktop',
-        'pywinauto.findwindows', 'pywinauto.base_wrapper',
-        'pywinauto.controls.uiawrapper', 'pywinauto.uia_defines',
-        'comtypes', 'comtypes.client',
-    ],
+    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
