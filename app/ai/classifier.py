@@ -23,15 +23,31 @@ class InboxClassifier:
     """Classify inbox messages with an OpenAI-compatible provider when configured."""
 
     def __init__(self) -> None:
-        self.model = os.getenv("OPENAI_MODEL")
-        self.api_key = os.getenv("OPENAI_API_KEY")
+        self.model = os.getenv("OPENAI_MODEL", "").strip()
+        self.api_key = os.getenv("OPENAI_API_KEY", "").strip()
         self.base_url = os.getenv("OPENAI_BASE_URL", "").strip() or None
-        self.provider = os.getenv("AI_PROVIDER", "OpenAI").strip() or "OpenAI"
+        self.provider = os.getenv("AI_PROVIDER", "OpenAI-compatible").strip() or "OpenAI-compatible"
+
+    def _client(self):
+        from openai import OpenAI
+        return OpenAI(api_key=self.api_key or "not-required", **({"base_url": self.base_url} if self.base_url else {}))
+
+    def _resolve_model(self, client) -> str:
+        if self.model:
+            return self.model
+        models = client.models.list()
+        data = getattr(models, "data", None) or []
+        if not data:
+            raise RuntimeError("The provider did not return any models. Enter a model name in Settings, or use a provider that exposes /models.")
+        model_id = getattr(data[0], "id", None)
+        if not model_id:
+            raise RuntimeError("The provider returned an invalid model list.")
+        return str(model_id)
 
     def classify(self, messages: list[GmailMessage]) -> list[ClassifiedMessage]:
         if not messages:
             return []
-        if self.api_key and self.model:
+        if self.api_key or self.base_url:
             try:
                 return self._classify_with_ai(messages)
             except Exception:
@@ -55,36 +71,15 @@ class InboxClassifier:
         return "\n".join(lines)
 
     def _classify_with_ai(self, messages: list[GmailMessage]) -> list[ClassifiedMessage]:
-        from openai import OpenAI
-
-        payload = [
-            {
-                "id": message.id,
-                "sender": message.sender,
-                "subject": message.subject,
-                "snippet": message.snippet,
-            }
-            for message in messages
-        ]
-        kwargs = {"api_key": self.api_key}
-        if self.base_url:
-            kwargs["base_url"] = self.base_url
-        client = OpenAI(**kwargs)
+        payload = [{"id": m.id, "sender": m.sender, "subject": m.subject, "snippet": m.snippet} for m in messages]
+        client = self._client()
         response = client.chat.completions.create(
-            model=self.model,
+            model=self._resolve_model(client),
             messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "Classify each email into exactly one category: important, work, "
-                        "personal, promotions, newsletters, or other. Return JSON only as "
-                        "an array of objects with id, category, confidence, reason."
-                    ),
-                },
+                {"role": "system", "content": "Classify each email into exactly one category: important, work, personal, promotions, newsletters, or other. Return JSON only as an array of objects with id, category, confidence, reason."},
                 {"role": "user", "content": json.dumps(payload)},
             ],
         )
-
         content = response.choices[0].message.content or "[]"
         results = {item["id"]: item for item in json.loads(content)}
         classified: list[ClassifiedMessage] = []
@@ -93,14 +88,7 @@ class InboxClassifier:
             category = item.get("category", "other")
             if category not in CATEGORIES:
                 category = "other"
-            classified.append(
-                ClassifiedMessage(
-                    message=message,
-                    category=category,
-                    confidence=float(item.get("confidence", 0.5)),
-                    reason=str(item.get("reason", "No explanation provided.")),
-                )
-            )
+            classified.append(ClassifiedMessage(message, category, float(item.get("confidence", 0.5)), str(item.get("reason", "No explanation provided."))))
         return classified
 
     @staticmethod
