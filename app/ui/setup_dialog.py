@@ -30,7 +30,7 @@ class SetupDialog(QDialog):
         form = QFormLayout()
 
         self.provider = QLineEdit(config.get("AI_PROVIDER", ""))
-        self.provider.setPlaceholderText("Optional — e.g. OpenRouter, Groq, Ollama")
+        self.provider.setPlaceholderText("Optional — e.g. Gemini, Anthropic, Ollama, OpenRouter")
         form.addRow("AI provider", self.provider)
 
         self.api_key = QLineEdit(config.get("OPENAI_API_KEY", ""))
@@ -39,7 +39,7 @@ class SetupDialog(QDialog):
         form.addRow("API key", self.api_key)
 
         self.base_url = QLineEdit(config.get("OPENAI_BASE_URL", ""))
-        self.base_url.setPlaceholderText("e.g. https://api.example.com/v1")
+        self.base_url.setPlaceholderText("API endpoint/base URL")
         form.addRow("API base URL", self.base_url)
 
         oauth_row = QHBoxLayout()
@@ -54,8 +54,8 @@ class SetupDialog(QDialog):
         layout.addLayout(form)
 
         note = QLineEdit(
-            "Model is automatic. The app discovers the first model exposed by the provider's /models endpoint. "
-            "Use an OpenAI-compatible Chat Completions API; keyless/local endpoints are supported."
+            "Model is automatic. The app detects common AI API protocols and discovers a model when the provider exposes a model-list endpoint. "
+            "Supported protocols include Gemini, Anthropic, Ollama, and OpenAI-compatible APIs."
         )
         note.setReadOnly(True)
         note.setObjectName("settingsNote")
