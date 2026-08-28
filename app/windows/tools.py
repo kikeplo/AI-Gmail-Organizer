@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 import subprocess
+import time
 from pathlib import Path
 from typing import Sequence
 
@@ -14,16 +15,17 @@ class ActiveWindow:
     title: str
     process_id: int | None = None
     executable: str | None = None
+    hwnd: int | None = None
 
 
 class WindowsTools:
-    """Windows automation surface for windows, apps, mouse, and keyboard."""
+    """Windows automation surface for windows, apps, mouse, keyboard, and foreground tracking."""
 
     APP_ALIASES = {
-        "chrome": ("chrome", "chrome.exe", "GoogleChromeAutoLaunch_"),
-        "google chrome": ("chrome", "chrome.exe", "GoogleChromeAutoLaunch_"),
-        "microsoft teams": ("ms-teams:",),
-        "teams": ("ms-teams:",),
+        "chrome": ("chrome", "chrome.exe"),
+        "google chrome": ("chrome", "chrome.exe"),
+        "microsoft teams": ("msteams:", "ms-teams:", "ms-teams.exe"),
+        "teams": ("msteams:", "ms-teams:", "ms-teams.exe"),
         "calculator": ("calc.exe",),
         "notepad": ("notepad.exe",),
         "file explorer": ("explorer.exe",),
@@ -31,21 +33,52 @@ class WindowsTools:
         "settings": ("ms-settings:",),
     }
 
-    def get_active_window(self) -> ActiveWindow:
-        if os.name != "nt": raise OSError("Windows automation is only available on Windows.")
-        import win32api, win32gui, win32process
-        hwnd = win32gui.GetForegroundWindow(); title = win32gui.GetWindowText(hwnd).strip() or "(untitled window)"
-        _, process_id = win32process.GetWindowThreadProcessId(hwnd); executable = None
-        try:
-            handle = win32api.OpenProcess(0x1000 | 0x0010, False, process_id)
-            try: executable = win32process.GetModuleFileNameEx(handle, 0)
-            finally: win32api.CloseHandle(handle)
-        except Exception: pass
-        return ActiveWindow(title, process_id, executable)
+    def __init__(self) -> None:
+        self._own_hwnd: int | None = None
+        self._last_external: ActiveWindow | None = None
 
-    def minimize_active_window(self): self._set_window_state("minimize")
-    def maximize_active_window(self): self._set_window_state("maximize")
-    def restore_active_window(self): self._set_window_state("restore")
+    def set_own_window(self, hwnd: int | None) -> None:
+        """Tell the tracker which window belongs to the Organizer overlay."""
+        self._own_hwnd = hwnd
+
+    def update_last_external_window(self) -> ActiveWindow | None:
+        """Capture the current foreground window unless it belongs to this app."""
+        current = self._read_foreground_window()
+        if current is None:
+            return self._last_external
+        if self._own_hwnd is not None and current.hwnd == self._own_hwnd:
+            return self._last_external
+        if current.executable and self._is_organizer_process(current.executable):
+            return self._last_external
+        self._last_external = current
+        return current
+
+    def get_active_window(self, external: bool = False) -> ActiveWindow:
+        if os.name != "nt":
+            raise OSError("Windows automation is only available on Windows.")
+        if external:
+            last = self.update_last_external_window()
+            if last is not None:
+                return last
+        current = self._read_foreground_window()
+        if current is None:
+            raise OSError("Could not determine the foreground window.")
+        return current
+
+    def get_last_external_window(self) -> ActiveWindow:
+        last = self.update_last_external_window()
+        if last is None:
+            raise OSError("No external application window has been observed yet.")
+        return last
+
+    def minimize_active_window(self):
+        self._set_window_state("minimize")
+
+    def maximize_active_window(self):
+        self._set_window_state("maximize")
+
+    def restore_active_window(self):
+        self._set_window_state("restore")
 
     def move_mouse(self, x: int, y: int, duration: float = 0.2):
         if os.name != "nt": raise OSError("Windows automation is only available on Windows.")
@@ -99,10 +132,8 @@ class WindowsTools:
         if os.name != "nt": raise OSError("Windows automation is only available on Windows.")
         target = executable.strip()
         if not target: raise ValueError("Application name cannot be empty.")
-        # Windows shell launch supports installed app protocols and registered apps.
         if target.endswith(":") or target.startswith("ms-"):
-            os.startfile(target)
-            return
+            os.startfile(target); return
         subprocess.Popen([target, *args], shell=False)
 
     def launch_named_application(self, name: str) -> str:
@@ -113,20 +144,42 @@ class WindowsTools:
             for alias, values in self.APP_ALIASES.items():
                 if query == alias or alias in query or query in alias:
                     candidates = values; break
-        if candidates is None: raise FileNotFoundError(f"I don't have a safe launcher mapping for '{name}'.")
+        if candidates is None:
+            raise FileNotFoundError(f"I don't have a safe launcher mapping for '{name}'.")
         last_error = None
         for target in candidates:
             try:
                 if target.endswith(":") or target.startswith("ms-"):
                     os.startfile(target)
-                elif target in {"chrome", "chrome.exe"}:
-                    try: subprocess.Popen([target], shell=False)
-                    except FileNotFoundError: os.startfile("chrome")
                 else:
-                    subprocess.Popen([target], shell=False)
+                    try: subprocess.Popen([target], shell=False)
+                    except FileNotFoundError:
+                        os.startfile(target)
+                time.sleep(0.15)
+                self.update_last_external_window()
                 return f"Opened {name}."
             except Exception as exc: last_error = exc
         raise FileNotFoundError(f"Could not open {name}. {last_error}")
+
+    @staticmethod
+    def _is_organizer_process(executable: str) -> bool:
+        return "AI-Gmail-Organizer".casefold() in Path(executable).name.casefold()
+
+    @staticmethod
+    def _read_foreground_window() -> ActiveWindow | None:
+        if os.name != "nt": return None
+        import win32api, win32gui, win32process
+        hwnd = win32gui.GetForegroundWindow()
+        if not hwnd: return None
+        title = win32gui.GetWindowText(hwnd).strip() or "(untitled window)"
+        _, process_id = win32process.GetWindowThreadProcessId(hwnd)
+        executable = None
+        try:
+            handle = win32api.OpenProcess(0x1000 | 0x0010, False, process_id)
+            try: executable = win32process.GetModuleFileNameEx(handle, 0)
+            finally: win32api.CloseHandle(handle)
+        except Exception: pass
+        return ActiveWindow(title, process_id, executable, int(hwnd))
 
     @staticmethod
     def _set_window_state(state: str):
