@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import base64
 import json
 import os
 import re
 import time
+from io import BytesIO
 from typing import Callable
 
 from app.ai.provider import AIProvider, AIProviderError
@@ -41,7 +43,7 @@ class RouterResponse:
 
 
 class SmartAIRouter:
-    """Select local/cloud AI, handle quota cooldowns, failover, and simple provider health metrics."""
+    """Select local/cloud AI, handle quota cooldowns, failover, and provider health metrics."""
 
     def __init__(self, cloud_factory: Callable[[], AIProvider] = AIProvider,
                  local_factory: Callable[[], LocalAIEngine] = LocalAIEngine) -> None:
@@ -89,21 +91,40 @@ class SmartAIRouter:
                 return RouterResponse(text, key, key != self._preferred_provider(), self._human_provider_message(key))
             except (AIProviderError, LocalAIError) as exc:
                 last_message = str(exc)
-                if self._is_quota_error(last_message) and key == "cloud":
-                    self._put_on_cooldown(key, last_message)
+                if self._is_quota_error(last_message) and key == "cloud": self._put_on_cooldown(key, last_message)
+                else: self._record_failure(key, last_message)
+        raise AIProviderError(last_message)
+
+    def vision_json(self, prompt: str, image_base64: str) -> dict:
+        """Run vision through the same provider failover and quota cooldown logic as text."""
+        last_message = "No configured vision-capable AI provider is available."
+        for key in self._ordered_candidates():
+            state = self.states[key]
+            if not state.available: continue
+            try:
+                state.requests += 1
+                if key == "cloud":
+                    if not self.cloud.configured: continue
+                    result = self.cloud.vision_json(prompt, image_base64)
                 else:
-                    self._record_failure(key, last_message)
+                    if not self.local.available(): continue
+                    from PIL import Image
+                    image = Image.open(BytesIO(base64.b64decode(image_base64)))
+                    result = self.local.vision_json(prompt, image)
+                self._success(key)
+                return result
+            except (AIProviderError, LocalAIError) as exc:
+                last_message = str(exc)
+                if self._is_quota_error(last_message) and key == "cloud": self._put_on_cooldown(key, last_message)
+                else: self._record_failure(key, last_message)
         raise AIProviderError(last_message)
 
     def classify_json(self, payload: list[dict], system: str = "") -> list[dict]:
         result = self.chat(json.dumps(payload), system)
         cleaned = result.text.replace("```json", "").replace("```", "").strip()
-        try:
-            parsed = json.loads(cleaned)
-        except json.JSONDecodeError as exc:
-            raise AIProviderError("The AI provider did not return valid JSON for classification.") from exc
-        if not isinstance(parsed, list):
-            raise AIProviderError("The AI provider returned an unexpected classification format.")
+        try: parsed = json.loads(cleaned)
+        except json.JSONDecodeError as exc: raise AIProviderError("The AI provider did not return valid JSON for classification.") from exc
+        if not isinstance(parsed, list): raise AIProviderError("The AI provider returned an unexpected classification format.")
         return parsed
 
     def _call_local(self, prompt: str, system: str) -> RouterResponse | None:
