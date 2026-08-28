@@ -1,41 +1,35 @@
 # Architecture Notes
 
-## v0.3
+## v0.4
 
-The application now has a real Gmail integration boundary while keeping provider-specific behavior outside the UI layer.
+The application is organized into separate layers:
 
 ```text
 Windows Overlay (PySide6)
         │
         ▼
    CommandAgent
-      │      │
-      │      └── Optional OpenAI Responses API
-      │
-      ▼
-   GmailClient
-      │
-      ├── Google OAuth 2.0
-      ├── Local token persistence
-      └── Gmail API (read-only)
+   ┌────┴────────────┐
+   ▼                 ▼
+GmailClient     InboxClassifier
+   │                 │
+   ▼                 ▼
+ Gmail API       AI model / local rules
 ```
 
-### Gmail security boundary
+### Inbox analysis flow
 
-The current OAuth scope is `gmail.readonly`. The application can retrieve message metadata and snippets, but v0.3 does not archive, label, delete, send, or otherwise modify messages.
+1. The user selects **Organize inbox** or enters a natural-language command.
+2. `CommandAgent` ensures Gmail OAuth is connected.
+3. `GmailClient` retrieves a small read-only message sample with sender, subject, and snippet metadata.
+4. `InboxClassifier` classifies each message as `important`, `work`, `personal`, `promotions`, `newsletters`, or `other`.
+5. With an AI key, the classifier requests structured JSON classification from the configured model. Without one, it uses deterministic local rules.
+6. The classifier returns category counts and concise explanations for the top messages.
 
-`credentials.json` and `token.json` are local-only and excluded by `.gitignore`.
+### Safety boundary
 
-### Command routing
+v0.4 does not modify Gmail. There are no archive, label, delete, send, or move operations. The organization feature remains read-only while the classification pipeline is validated.
 
-The command agent first recognizes simple Gmail search intents such as:
+### Next architectural step
 
-- unread mail → `is:unread`
-- starred mail → `is:starred`
-- sender search → `from:address@example.com`
-
-General natural-language requests can still be routed to the optional AI provider.
-
-## Next architectural step
-
-v0.4 should introduce a structured tool interface so the AI model can choose among typed tools instead of relying on keyword routing. Tool execution should return structured results to the UI and preserve an explicit confirmation boundary for actions that modify external state.
+v0.5 will add explicit Gmail write tools behind a confirmation layer. The agent should propose an action, show the affected messages, and wait for user approval before changing external state.
