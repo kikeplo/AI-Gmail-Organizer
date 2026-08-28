@@ -37,13 +37,11 @@ class CommandAgent:
             response = AgentResponse("Please enter a command.")
             self.memory.remember("", response.text, response.mode)
             return response
-
         lowered = command.casefold()
         remembered = self._handle_memory_query(lowered)
         if remembered is not None:
             self.memory.remember(command, remembered.text, remembered.mode)
             return remembered
-
         if self._looks_like_visual_task(lowered):
             try:
                 response = AgentResponse(self.vision.run(command), mode="vision")
@@ -65,7 +63,6 @@ class CommandAgent:
                 response = AgentResponse(self._local_response(command), mode="demo")
             else:
                 response = self._ask_ai(command)
-
         self.memory.remember(command, response.text, response.mode)
         return response
 
@@ -98,7 +95,7 @@ class CommandAgent:
             return AgentResponse("\n".join(lines), mode="memory")
         if "usage" in text or "analytics" in text or "stats" in text:
             counts = self.memory.mode_counts()
-            lines = [f"Local usage: {self.memory.count()} interaction(s)", ""]]
+            lines = [f"Local usage: {self.memory.count()} interaction(s)", ""]
             for mode, count in counts.items():
                 lines.append(f"{mode}: {count}")
             return AgentResponse("\n".join(lines), mode="analytics")
@@ -184,10 +181,13 @@ class CommandAgent:
     def _to_gmail_query(command: str) -> str:
         text = command.casefold()
         queries: list[str] = []
-        if "unread" in text: queries.append("is:unread")
-        if "starred" in text: queries.append("is:starred")
+        if "unread" in text:
+            queries.append("is:unread")
+        if "starred" in text:
+            queries.append("is:starred")
         sender = re.search(r"from\s+([\w.+-]+@[\w.-]+)", text)
-        if sender: queries.append(f"from:{sender.group(1)}")
+        if sender:
+            queries.append(f"from:{sender.group(1)}")
         return " ".join(queries)
 
     @staticmethod
