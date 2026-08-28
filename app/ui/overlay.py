@@ -1,4 +1,4 @@
-"""Interactive desktop overlay for v0.6."""
+"""Interactive desktop overlay for AI Gmail Organizer v0.7."""
 
 from __future__ import annotations
 
@@ -18,21 +18,22 @@ class OverlayWindow(QMainWindow):
         self.setWindowFlag(Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setMinimumSize(760, 500)
-        self.resize(920, 640)
+        self.resize(940, 660)
         self._drag_position = None
         self._agent = CommandAgent()
         self._pending_action = None
         self._build_ui()
-        self._add_message("assistant", "Hi! I’m your AI Gmail Organizer. v0.6 adds Windows window controls alongside Gmail organization.")
+        self._add_message("assistant", "Hi! I’m your AI Gmail Organizer. v0.7 adds local memory and usage analytics alongside Gmail and Windows tools.")
 
     def _build_ui(self) -> None:
         root = QWidget(); root.setObjectName("root"); self.setCentralWidget(root)
         layout = QVBoxLayout(root); layout.setContentsMargins(18,18,18,18); layout.setSpacing(10)
         panel = QFrame(); panel.setObjectName("panel")
         panel_layout = QVBoxLayout(panel); panel_layout.setContentsMargins(22,18,22,18); panel_layout.setSpacing(12)
+
         header = QHBoxLayout(); title_block = QVBoxLayout(); title_block.setSpacing(2)
         title = QLabel("AI Gmail Organizer"); title.setObjectName("title")
-        subtitle = QLabel("v0.6 • Gmail + Windows automation"); subtitle.setObjectName("subtitle")
+        subtitle = QLabel("v0.7 • Gmail + Windows + local memory"); subtitle.setObjectName("subtitle")
         title_block.addWidget(title); title_block.addWidget(subtitle)
         status = QLabel("● Ready"); status.setObjectName("status")
         close_button = QPushButton("×"); close_button.setObjectName("closeButton"); close_button.setFixedSize(36,36); close_button.clicked.connect(self.close)
@@ -40,7 +41,8 @@ class OverlayWindow(QMainWindow):
 
         for commands in (
             (("Active window", "What window is active?"), ("Minimize", "Minimize the active window"), ("Maximize", "Maximize the active window"), ("Restore", "Restore the active window")),
-            (("Organize inbox", "Organize my inbox"), ("Unread", "Find my unread Gmail emails"), ("Archive unread", "Archive my unread Gmail emails")),
+            (("Organize inbox", "Organize my inbox"), ("Unread", "Find my unread Gmail emails"), ("Archive unread", "Archive my unread Gmail emails"), ("History", "Show my history")),
+            (("Usage stats", "Show usage analytics"),),
         ):
             row = QHBoxLayout()
             for label, command in commands:
@@ -52,8 +54,9 @@ class OverlayWindow(QMainWindow):
         scroll_host = QWidget(); scroll_host.setLayout(self.messages)
         scroll = QScrollArea(); scroll.setWidget(scroll_host); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.NoFrame); scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff); scroll.setObjectName("messagesScroll")
         panel_layout.addWidget(scroll, 1)
-        hint = QLabel("Gmail changes require confirmation. Windows controls are limited to supported window-management actions."); hint.setObjectName("hint"); panel_layout.addWidget(hint)
-        input_row = QHBoxLayout(); self.command_input = QLineEdit(); self.command_input.setPlaceholderText("e.g. What window is active?"); self.command_input.setClearButtonEnabled(True)
+
+        hint = QLabel("Memory stays in a local SQLite database. Gmail mutations still require confirmation."); hint.setObjectName("hint"); panel_layout.addWidget(hint)
+        input_row = QHBoxLayout(); self.command_input = QLineEdit(); self.command_input.setPlaceholderText("e.g. Show my history"); self.command_input.setClearButtonEnabled(True)
         self.send_button = QPushButton("Send"); self.send_button.setObjectName("sendButton"); self.send_button.setMinimumWidth(90); self.send_button.clicked.connect(self._on_send); self.command_input.returnPressed.connect(self._on_send)
         input_row.addWidget(self.command_input); input_row.addWidget(self.send_button); panel_layout.addLayout(input_row); layout.addWidget(panel)
 
