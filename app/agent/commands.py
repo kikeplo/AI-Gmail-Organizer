@@ -1,4 +1,4 @@
-"""Command routing for the AI Gmail Organizer v0.7."""
+"""Command routing across Gmail, Windows, the AI provider, and local memory."""
 
 from __future__ import annotations
 
@@ -21,10 +21,10 @@ class AgentResponse:
 
 
 class CommandAgent:
-    """Route commands across Gmail, Windows, AI, and local memory."""
+    """Route user requests to the appropriate application service."""
 
     def __init__(self, gmail: GmailClient | None = None, memory: MemoryStore | None = None) -> None:
-        self.model = os.getenv("OPENAI_MODEL", "gpt-5.6-luna")
+        self.model = os.getenv("OPENAI_MODEL")
         self.api_key = os.getenv("OPENAI_API_KEY")
         self.gmail = gmail or GmailClient()
         self.classifier = InboxClassifier()
@@ -54,7 +54,7 @@ class CommandAgent:
             response = self._handle_inbox_organization()
         elif self._looks_like_gmail_search(lowered):
             response = self._handle_gmail_search(command)
-        elif not self.api_key:
+        elif not self.api_key or not self.model:
             response = AgentResponse(self._local_response(command), mode="demo")
         else:
             response = self._ask_ai(command)
@@ -69,7 +69,15 @@ class CommandAgent:
             response = client.responses.create(
                 model=self.model,
                 input=[
-                    {"role": "system", "content": "You are the AI Gmail Organizer desktop assistant. Gmail, Windows, and local memory capabilities exist. Never claim an external action happened unless the application explicitly reports it."},
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are the desktop assistant for AI Gmail Organizer. "
+                            "Gmail, Windows, and local memory capabilities are available. "
+                            "Never claim that an external action occurred unless the application "
+                            "explicitly reports success."
+                        ),
+                    },
                     {"role": "user", "content": command},
                 ],
             )
@@ -125,7 +133,7 @@ class CommandAgent:
             match = re.search(r"(?:label|move to)\s+['\"]?([^'\"]+)['\"]?$", command, flags=re.IGNORECASE)
             label_name = match.group(1).strip() if match else "Organized"
             action = self.actions.plan_label(ids, label_name)
-        preview = ["⚠️ Confirmation required", "", action.description, "", "Nothing has been changed yet.", "Confirm this action from the application before execution."]
+        preview = ["Confirmation required", "", action.description, "", "Nothing has been changed yet.", "Confirm this action from the application before execution."]
         return AgentResponse("\n".join(preview), mode="confirmation", pending_action=action)
 
     def confirm_action(self, action: object, confirmed: bool) -> AgentResponse:
@@ -140,7 +148,12 @@ class CommandAgent:
         try:
             self.gmail.connect()
         except Exception as exc:
-            return AgentResponse("Gmail is not connected yet.\n\n" f"Connection setup: {exc}\n\n" "Once credentials.json is configured, run the command again.", mode="gmail_setup")
+            return AgentResponse(
+                "Gmail is not connected yet.\n\n"
+                f"Connection setup: {exc}\n\n"
+                "Once credentials.json is configured, run the command again.",
+                mode="gmail_setup",
+            )
         return None
 
     def _handle_inbox_organization(self) -> AgentResponse:
@@ -185,4 +198,8 @@ class CommandAgent:
 
     @staticmethod
     def _local_response(command: str) -> str:
-        return "Demo mode is active. Add OPENAI_API_KEY for general AI commands, or configure Gmail OAuth to search and organize your inbox.\n\nReceived: " + command
+        return (
+            "Demo mode is active. Configure OPENAI_API_KEY and OPENAI_MODEL for general AI commands, "
+            "or use the supported Gmail, Windows, and memory commands.\n\n"
+            f"Received: {command}"
+        )
