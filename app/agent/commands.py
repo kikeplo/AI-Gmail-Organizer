@@ -83,7 +83,15 @@ class CommandAgent:
             )
             return AgentResponse(response.output_text, mode="openai")
         except Exception as exc:  # pragma: no cover
-            return AgentResponse(f"The AI provider could not be reached.\n\n{exc}", mode="error")
+            message = str(exc)
+            lowered = message.casefold()
+            if "429" in lowered or "insufficient_quota" in lowered or "credit_balance_exhausted" in lowered:
+                return AgentResponse(
+                    "The AI provider is unavailable because the API account has no remaining credits.\n\n"
+                    "Add API credits or switch to a different provider/configuration, then try again.",
+                    mode="quota_error",
+                )
+            return AgentResponse("The AI provider could not be reached.\n\n" + message, mode="error")
 
     def _handle_memory_query(self, text: str) -> AgentResponse | None:
         if "history" in text or "remember" in text or "what did i ask" in text:
@@ -151,7 +159,7 @@ class CommandAgent:
             return AgentResponse(
                 "Gmail is not connected yet.\n\n"
                 f"Connection setup: {exc}\n\n"
-                "Once credentials.json is configured, run the command again.",
+                "Open Settings to configure Gmail, then run the command again.",
                 mode="gmail_setup",
             )
         return None
@@ -199,7 +207,7 @@ class CommandAgent:
     @staticmethod
     def _local_response(command: str) -> str:
         return (
-            "Demo mode is active. Configure OPENAI_API_KEY and OPENAI_MODEL for general AI commands, "
+            "Demo mode is active. Configure an AI provider for general AI commands, "
             "or use the supported Gmail, Windows, and memory commands.\n\n"
             f"Received: {command}"
         )
