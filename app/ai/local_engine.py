@@ -1,11 +1,9 @@
-"""Optional local AI engine for lightweight offline tasks.
-
-Uses a local Ollama-compatible HTTP endpoint when available. The engine is
-independent from the cloud provider so simple tasks can stay local and cheap.
-"""
+"""Optional local AI engine for lightweight offline tasks."""
 
 from __future__ import annotations
 
+import base64
+import io
 import json
 import os
 from urllib.error import HTTPError, URLError
@@ -37,10 +35,7 @@ class LocalAIEngine:
 
     def list_models(self) -> list[str]:
         data = self._request("GET", f"{self.base_url}/models")
-        models: list[str] = []
-        for item in data.get("data", []):
-            if isinstance(item, dict) and item.get("id"):
-                models.append(str(item["id"]))
+        models = [str(item["id"]) for item in data.get("data", []) if isinstance(item, dict) and item.get("id")]
         if not models:
             raise LocalAIError("No local AI models were found. Install a model in your local AI runtime first.")
         return models
@@ -58,30 +53,43 @@ class LocalAIEngine:
     def chat(self, prompt: str, system: str = "") -> str:
         if not self.enabled:
             raise LocalAIError("Local AI is disabled.")
-        body = {
-            "model": self.resolve_model(),
-            "messages": [
-                {"role": "system", "content": system or "You are a concise local assistant for lightweight desktop tasks."},
-                {"role": "user", "content": prompt},
-            ],
-        }
+        body = {"model": self.resolve_model(), "messages": [{"role": "system", "content": system or "You are a concise local assistant for lightweight desktop tasks."}, {"role": "user", "content": prompt}]}
         data = self._request("POST", f"{self.base_url}/chat/completions", body)
         try:
             content = data["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as exc:
             raise LocalAIError("The local AI runtime returned an unsupported response format.") from exc
-        if isinstance(content, list):
-            content = "".join(part.get("text", "") for part in content if isinstance(part, dict))
+        if isinstance(content, list): content = "".join(part.get("text", "") for part in content if isinstance(part, dict))
         return str(content).strip()
+
+    def vision_json(self, prompt: str, image) -> dict:
+        """Use a local multimodal model through an OpenAI-compatible vision request."""
+        if not self.enabled:
+            raise LocalAIError("Local AI is disabled.")
+        encoded = base64.b64encode(self._image_bytes(image)).decode("ascii")
+        body = {"model": self.resolve_model(), "messages": [{"role": "system", "content": "Return only valid JSON."}, {"role": "user", "content": [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encoded}"}}]}]}
+        data = self._request("POST", f"{self.base_url}/chat/completions", body)
+        try: raw = str(data["choices"][0]["message"]["content"]).strip()
+        except (KeyError, IndexError, TypeError) as exc: raise LocalAIError("The local vision model returned an unsupported response.") from exc
+        raw = raw.replace("```json", "").replace("```", "").strip()
+        try: result = json.loads(raw)
+        except json.JSONDecodeError as exc: raise LocalAIError("The local vision model did not return valid JSON.") from exc
+        if not isinstance(result, dict): raise LocalAIError("The local vision model returned an invalid action format.")
+        return result
+
+    @staticmethod
+    def _image_bytes(image) -> bytes:
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        return buffer.getvalue()
 
     def _request(self, method: str, url: str, body: dict | None = None) -> dict:
         data = json.dumps(body).encode("utf-8") if body is not None else None
         headers = {"Accept": "application/json"}
-        if body is not None:
-            headers["Content-Type"] = "application/json"
+        if body is not None: headers["Content-Type"] = "application/json"
         request = Request(url, data=data, headers=headers, method=method)
         try:
-            with urlopen(request, timeout=8) as response:
+            with urlopen(request, timeout=45 if body is not None else 8) as response:
                 raw = response.read().decode("utf-8")
                 return json.loads(raw) if raw else {}
         except HTTPError as exc:
