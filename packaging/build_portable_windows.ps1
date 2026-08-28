@@ -44,27 +44,18 @@ $AppDir = Join-Path $Root 'dist\AI-Gmail-Organizer'
 $Exe = Join-Path $AppDir 'AI-Gmail-Organizer.exe'
 $BrowserDir = Join-Path $AppDir 'playwright'
 
+if (-not (Test-Path $AppDir)) { throw "Missing application folder: $AppDir" }
 if (-not (Test-Path $Exe)) { throw "Missing launcher: $Exe" }
 
-# Copy the Playwright browser runtime explicitly after PyInstaller finishes.
-# This avoids relying on PyInstaller to preserve a browser directory tree.
+# Keep the browser runtime beside the launcher. Python modules such as PyAutoGUI,
+# pywinauto and Pillow are bundled into the PyInstaller archive and therefore do
+# not need to exist as loose directories in the application folder.
 if (Test-Path $BrowserDir) { Remove-Item $BrowserDir -Recurse -Force }
 New-Item -ItemType Directory -Path $BrowserDir | Out-Null
 Copy-Item -Path (Join-Path $PlaywrightPath '*') -Destination $BrowserDir -Recurse -Force
 
-if (-not (Test-Path $BrowserDir)) { throw "Missing bundled browser directory: $BrowserDir" }
 $Chromium = Get-ChildItem -Path $BrowserDir -Recurse -Filter 'chrome.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
 if (-not $Chromium) { throw 'No Chromium chrome.exe was found in the packaged browser directory.' }
-
-# Basic packaged-file checks for the Windows automation stack.
-$AutomationMarkers = @('pyautogui', 'pywinauto', 'pyscreeze')
-foreach ($marker in $AutomationMarkers) {
-    $found = Get-ChildItem -Path $AppDir -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match $marker } | Select-Object -First 1
-    if (-not $found) { throw "Expected packaged automation component was not found: $marker" }
-}
-
-$RuntimeHook = Join-Path $AppDir 'packaging\runtime_hooks\playwright_portable.py'
-# Runtime hooks are compiled into the application, so this check is informational only.
 
 Write-Host ''
 Write-Host 'Portable build verified.' -ForegroundColor Green
