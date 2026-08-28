@@ -5,9 +5,8 @@ from pathlib import Path
 
 project_root = Path(SPECPATH).resolve().parent.parent
 
-
- a = Analysis(
-    ['main.py'],
+a = Analysis(
+    [str(project_root / 'main.py')],
     pathex=[str(project_root)],
     binaries=[],
     datas=[],
