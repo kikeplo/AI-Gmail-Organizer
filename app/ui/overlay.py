@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from PySide6.QtCore import Qt, QThread
+from PySide6.QtCore import Qt, QThread, QTimer
 from PySide6.QtWidgets import (
     QDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox,
     QPushButton, QScrollArea, QSizePolicy, QTabWidget, QVBoxLayout, QWidget,
@@ -36,7 +36,18 @@ class OverlayWindow(QMainWindow):
         self._thread: QThread | None = None
         self._worker: CommandWorker | None = None
         self._build_ui()
+        self._agent.windows.set_own_window(int(self.winId()))
+        self._foreground_timer = QTimer(self)
+        self._foreground_timer.setInterval(350)
+        self._foreground_timer.timeout.connect(self._remember_external_window)
+        self._foreground_timer.start()
         self._add_message("assistant", f"AI Gmail Organizer {APP_VERSION_TEXT} is ready. I can work with Gmail, Windows, visual desktop control, and local memory.")
+
+    def _remember_external_window(self) -> None:
+        try:
+            self._agent.windows.tools.update_last_external_window()
+        except Exception:
+            pass
 
     def _build_ui(self) -> None:
         root = QWidget(); root.setObjectName("root"); self.setCentralWidget(root)
@@ -57,7 +68,11 @@ class OverlayWindow(QMainWindow):
         self.chat_page = self._build_chat_page(); self.history_view = HistoryView(self._memory); self.usage_view = UsageView(self._memory)
         self.tabs.addTab(self.chat_page, "Assistant"); self.tabs.addTab(self.history_view, "History"); self.tabs.addTab(self.usage_view, "Usage"); self.tabs.currentChanged.connect(self._refresh_dashboard)
         panel_layout.addWidget(self.tabs, 1); layout.addWidget(panel)
-        self.setStyleSheet("""
+        self.setStyleSheet(self._style())
+
+    @staticmethod
+    def _style() -> str:
+        return """
             QWidget#root { background: transparent; }
             QFrame#panel { background: rgba(18,22,32,250); border: 1px solid rgba(255,255,255,30); border-radius: 24px; }
             QLabel#title { color: #F8FAFC; font-size: 22px; font-weight: 700; }
@@ -92,7 +107,7 @@ class OverlayWindow(QMainWindow):
             QPushButton#sendButton { color: #FFFFFF; background: #4F6CF7; border: none; border-radius: 13px; padding: 11px 20px; font-weight: 700; }
             QPushButton#sendButton:hover { background: #607BFA; }
             QPushButton#sendButton:disabled { background: #30384E; color: #9AA4B4; }
-        """)
+        """
 
     def _build_chat_page(self) -> QWidget:
         page = QWidget(); layout = QVBoxLayout(page); layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(12)
@@ -141,8 +156,7 @@ class OverlayWindow(QMainWindow):
         self._add_message("user", command); self.command_input.clear(); self.send_button.setEnabled(False); self.send_button.setText("Working…"); self.status.setText("● Working"); self.hint.setText("Working in the background. You can pause or stop a visual task at any time."); self.pause_button.setEnabled(True); self.stop_button.setEnabled(True)
         self._thread = QThread(self); self._worker = CommandWorker(self._agent, command); self._worker.moveToThread(self._thread); self._thread.started.connect(self._worker.run); self._worker.status.connect(self._on_worker_status); self._worker.finished.connect(self._on_worker_finished); self._worker.failed.connect(self._on_worker_failed); self._worker.finished.connect(self._thread.quit); self._worker.failed.connect(self._thread.quit); self._thread.finished.connect(self._cleanup_worker); self._thread.start()
 
-    def _on_worker_status(self, message: str) -> None:
-        self.status.setText("● " + message); self.hint.setText(message)
+    def _on_worker_status(self, message: str) -> None: self.status.setText("● " + message); self.hint.setText(message)
 
     def _toggle_pause(self) -> None:
         if self._thread is None: return
@@ -176,7 +190,7 @@ class OverlayWindow(QMainWindow):
         if dialog.exec() == QDialog.Accepted:
             from dotenv import load_dotenv
             from app.config.user_settings import ENV_FILE
-            load_dotenv(ENV_FILE, override=True); self._agent = CommandAgent(); self._add_message("assistant", "Settings updated. The new AI provider is active now — no restart required.")
+            load_dotenv(ENV_FILE, override=True); self._agent = CommandAgent(); self._agent.windows.set_own_window(int(self.winId())); self._add_message("assistant", "Settings updated. The new AI provider is active now — no restart required.")
         self.history_view.store = self._memory; self.usage_view.store = self._memory
 
     def mousePressEvent(self, event) -> None:
