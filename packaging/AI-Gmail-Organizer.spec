@@ -3,7 +3,8 @@
 
 from pathlib import Path
 
-project_root = Path(SPECPATH).resolve().parent.parent
+project_root = Path(SPECPATH).resolve().parent
+
 
 a = Analysis(
     [str(project_root / 'main.py')],
