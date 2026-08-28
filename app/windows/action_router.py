@@ -33,10 +33,10 @@ class WindowsActionRouter:
             if any(term in text for term in ("what window", "active window", "focused window", "which window")):
                 return WindowActionResponse(self._describe_active_window(self.tools.get_last_external_window()), mode="windows_active_window")
 
-            desktop_app = self._desktop_app_target(command)
+            desktop_app, as_admin = self._desktop_app_request(command)
             if desktop_app:
-                message = self.tools.launch_named_application(desktop_app)
-                return WindowActionResponse(message, mode="windows_app_launch")
+                message = self.tools.launch_named_application(desktop_app, as_admin=as_admin)
+                return WindowActionResponse(message, mode="windows_app_launch_admin" if as_admin else "windows_app_launch")
 
             try:
                 semantic = self._semantic_click_target(command)
@@ -75,12 +75,15 @@ class WindowsActionRouter:
             return WindowActionResponse(f"Desktop action failed.\n\n{exc}", mode="windows_error")
 
     @staticmethod
-    def _desktop_app_target(command: str) -> str | None:
+    def _desktop_app_request(command: str) -> tuple[str | None, bool]:
         text = command.casefold().strip()
-        match = re.search(r"(?:click|double-click|double click|open|launch|start)\s+(?:the\s+)?(.+?)(?:\s+(?:icon|app|application))?(?:\s+on my desktop|\s+on the desktop|\s+desktop icon|\s+from the taskbar)?$", text)
+        match = re.search(r"(?:click|double-click|double click|open|launch|start|run)\s+(?:the\s+)?(.+?)(?:\s+(?:icon|app|application))?(?:\s+on my desktop|\s+on the desktop|\s+desktop icon|\s+from the taskbar)?$", text)
         if not match:
-            return None
-        target = re.sub(r"[^a-z0-9 ]+", " ", match.group(1)).strip()
+            return None, False
+        raw_target = match.group(1).strip()
+        as_admin = bool(re.search(r"\b(?:as|with)\s+administrator(?:\s+privileges)?\b|\badmin\b", raw_target))
+        target = re.sub(r"\b(?:as|with)\s+administrator(?:\s+privileges)?\b|\badmin\b", "", raw_target).strip()
+        target = re.sub(r"[^a-z0-9 ]+", " ", target).strip()
         aliases = {
             "chrome": "chrome", "google chrome": "chrome",
             "microsoft teams": "microsoft teams", "teams": "teams",
@@ -88,7 +91,7 @@ class WindowsActionRouter:
             "notepad": "notepad", "file explorer": "file explorer",
             "explorer": "explorer", "settings": "settings",
         }
-        return aliases.get(target)
+        return aliases.get(target), as_admin
 
     @staticmethod
     def _semantic_click_target(command: str) -> str | None:
