@@ -31,7 +31,16 @@ class CommandAgent:
         self.memory = memory or MemoryStore()
         self.vision = VisionAgent(self.ai, self.windows.tools)
 
-    def respond(self, command: str) -> AgentResponse:
+    def stop_task(self) -> None:
+        self.vision.stop()
+
+    def pause_task(self) -> None:
+        self.vision.pause()
+
+    def resume_task(self) -> None:
+        self.vision.resume()
+
+    def respond(self, command: str, on_status=None) -> AgentResponse:
         command = command.strip()
         if not command:
             response = AgentResponse("Please enter a command.")
@@ -44,7 +53,8 @@ class CommandAgent:
             return remembered
         if self._looks_like_visual_task(lowered):
             try:
-                response = AgentResponse(self.vision.run(command), mode="vision")
+                result = self.vision.run(command, on_status=on_status)
+                response = AgentResponse(result.text, mode="vision" if not result.needs_confirmation else "confirmation")
             except VisionAgentError as exc:
                 response = AgentResponse(str(exc), mode="vision_error")
             except Exception as exc:
@@ -68,11 +78,7 @@ class CommandAgent:
 
     @staticmethod
     def _looks_like_visual_task(text: str) -> bool:
-        visual_terms = (
-            "click", "double-click", "double click", "right-click", "right click", "on the screen",
-            "on screen", "look at", "find on screen", "find on the screen", "navigate", "open the tab",
-            "select the tab", "go to the tab", "on gmail", "in chrome", "in the browser", "visually",
-        )
+        visual_terms = ("click", "double-click", "double click", "right-click", "right click", "on the screen", "on screen", "look at", "find on screen", "find on the screen", "navigate", "open the tab", "select the tab", "go to the tab", "on gmail", "in chrome", "in the browser", "visually")
         return any(term in text for term in visual_terms)
 
     def _ask_ai(self, command: str) -> AgentResponse:
@@ -89,15 +95,14 @@ class CommandAgent:
             interactions = self.memory.recent(8)
             if not interactions:
                 return AgentResponse("I do not have any saved interaction history yet.", mode="memory")
-            lines = ["Recent local memory:", ""]
+            lines = ["Recent local memory", ""]
             for item in interactions:
                 lines.extend((f"• {item.command or '(empty command)'}", f"  {item.mode}: {item.response.splitlines()[0]}"))
             return AgentResponse("\n".join(lines), mode="memory")
         if "usage" in text or "analytics" in text or "stats" in text:
             counts = self.memory.mode_counts()
             lines = [f"Local usage: {self.memory.count()} interaction(s)", ""]
-            for mode, count in counts.items():
-                lines.append(f"{mode}: {count}")
+            for mode, count in counts.items(): lines.append(f"{mode}: {count}")
             return AgentResponse("\n".join(lines), mode="analytics")
         return None
 
@@ -115,18 +120,13 @@ class CommandAgent:
 
     def _plan_mutation(self, command: str) -> AgentResponse:
         connection_error = self._connect()
-        if connection_error:
-            return connection_error
+        if connection_error: return connection_error
         query = self._to_gmail_query(command)
-        try:
-            messages = self.gmail.list_messages(query=query, max_results=10)
-        except Exception as exc:
-            return AgentResponse(f"Gmail lookup failed.\n\n{exc}", mode="gmail_error")
-        if not messages:
-            return AgentResponse("No messages matched the request, so there is nothing to change.", mode="gmail")
+        try: messages = self.gmail.list_messages(query=query, max_results=10)
+        except Exception as exc: return AgentResponse(f"Gmail lookup failed.\n\n{exc}", mode="gmail_error")
+        if not messages: return AgentResponse("No messages matched the request, so there is nothing to change.", mode="gmail")
         ids = [message.id for message in messages]
-        if "archive" in command.casefold():
-            action = self.actions.plan_archive(ids)
+        if "archive" in command.casefold(): action = self.actions.plan_archive(ids)
         else:
             match = re.search(r"(?:label|move to)\s+['\"]?([^'\"]+)['\"]?$", command, flags=re.IGNORECASE)
             label_name = match.group(1).strip() if match else "Organized"
@@ -135,59 +135,44 @@ class CommandAgent:
         return AgentResponse("\n".join(preview), mode="confirmation", pending_action=action)
 
     def confirm_action(self, action: object, confirmed: bool) -> AgentResponse:
-        if not confirmed:
-            return AgentResponse("Action cancelled. Your Gmail was not changed.", mode="cancelled")
+        if not confirmed: return AgentResponse("Action cancelled. Your Gmail was not changed.", mode="cancelled")
         completed = self.actions.execute_confirmed(action, confirmed=True)
         return AgentResponse(f"Done. {completed} Gmail message(s) were updated.", mode="gmail_action")
 
     def _connect(self) -> AgentResponse | None:
-        if self.gmail.is_connected:
-            return None
-        try:
-            self.gmail.connect()
-        except Exception as exc:
-            return AgentResponse("Gmail is not connected yet.\n\nConnection setup: " + str(exc) + "\n\nOpen Settings to configure Gmail, then run the command again.", mode="gmail_setup")
+        if self.gmail.is_connected: return None
+        try: self.gmail.connect()
+        except Exception as exc: return AgentResponse("Gmail is not connected yet.\n\nConnection setup: " + str(exc) + "\n\nOpen Settings to configure Gmail, then run the command again.", mode="gmail_setup")
         return None
 
     def _handle_inbox_organization(self) -> AgentResponse:
         connection_error = self._connect()
-        if connection_error:
-            return connection_error
+        if connection_error: return connection_error
         try:
             messages = self.gmail.list_messages(query="", max_results=20)
             from app.ai.classifier import InboxClassifier
             classified = InboxClassifier().classify(messages)
             return AgentResponse(InboxClassifier().summarize(classified), mode="classification")
-        except Exception as exc:
-            return AgentResponse(f"Inbox analysis failed.\n\n{exc}", mode="gmail_error")
+        except Exception as exc: return AgentResponse(f"Inbox analysis failed.\n\n{exc}", mode="gmail_error")
 
     def _handle_gmail_search(self, command: str) -> AgentResponse:
         connection_error = self._connect()
-        if connection_error:
-            return connection_error
+        if connection_error: return connection_error
         query = self._to_gmail_query(command)
-        try:
-            messages = self.gmail.list_messages(query=query, max_results=10)
-        except Exception as exc:
-            return AgentResponse(f"Gmail search failed.\n\n{exc}", mode="gmail_error")
-        if not messages:
-            return AgentResponse("No matching Gmail messages were found.", mode="gmail")
+        try: messages = self.gmail.list_messages(query=query, max_results=10)
+        except Exception as exc: return AgentResponse(f"Gmail search failed.\n\n{exc}", mode="gmail_error")
+        if not messages: return AgentResponse("No matching Gmail messages were found.", mode="gmail")
         lines = [f"Found {len(messages)} message(s):", ""]
-        for index, message in enumerate(messages, start=1):
-            lines.extend((f"{index}. {message.subject}", f"   From: {message.sender}", f"   {message.snippet}"))
+        for index, message in enumerate(messages, start=1): lines.extend((f"{index}. {message.subject}", f"   From: {message.sender}", f"   {message.snippet}"))
         return AgentResponse("\n".join(lines), mode="gmail")
 
     @staticmethod
     def _to_gmail_query(command: str) -> str:
-        text = command.casefold()
-        queries: list[str] = []
-        if "unread" in text:
-            queries.append("is:unread")
-        if "starred" in text:
-            queries.append("is:starred")
+        text = command.casefold(); queries: list[str] = []
+        if "unread" in text: queries.append("is:unread")
+        if "starred" in text: queries.append("is:starred")
         sender = re.search(r"from\s+([\w.+-]+@[\w.-]+)", text)
-        if sender:
-            queries.append(f"from:{sender.group(1)}")
+        if sender: queries.append(f"from:{sender.group(1)}")
         return " ".join(queries)
 
     @staticmethod
