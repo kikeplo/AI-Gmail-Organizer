@@ -8,10 +8,11 @@ from app.agent.commands import AgentResponse, CommandAgent
 
 
 class CommandWorker(QObject):
-    """Run an agent command outside the Qt GUI thread."""
+    """Run an agent command outside the Qt GUI thread and report progress."""
 
     finished = Signal(object)
     failed = Signal(str)
+    status = Signal(str)
 
     def __init__(self, agent: CommandAgent, command: str) -> None:
         super().__init__()
@@ -21,7 +22,7 @@ class CommandWorker(QObject):
     @Slot()
     def run(self) -> None:
         try:
-            response: AgentResponse = self.agent.respond(self.command)
+            response: AgentResponse = self.agent.respond(self.command, on_status=self.status.emit)
             self.finished.emit(response)
         except Exception as exc:  # pragma: no cover
             self.failed.emit(str(exc))
