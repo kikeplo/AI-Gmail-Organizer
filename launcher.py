@@ -22,7 +22,17 @@ def user_data_dir() -> Path:
     return path
 
 
+def configure_bundled_playwright() -> None:
+    """Point Playwright at the browser runtime bundled inside a packaged build."""
+    if not getattr(sys, "frozen", False):
+        return
+    bundled = Path(getattr(sys, "_MEIPASS", "")) / "playwright"
+    if bundled.exists():
+        os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", str(bundled))
+
+
 def main() -> int:
+    configure_bundled_playwright()
     config_dir = user_data_dir()
     load_dotenv(config_dir / ".env", override=True)
     app = QApplication(sys.argv)
