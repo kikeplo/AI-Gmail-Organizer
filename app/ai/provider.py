@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import json
 import os
 from urllib.error import HTTPError, URLError
@@ -30,8 +29,6 @@ class AIProvider:
             return "gemini"
         if "api.anthropic.com" in text or "anthropic" in text:
             return "anthropic"
-        if "ollama" in text:
-            return "openai_compatible"
         return "openai_compatible"
 
     def _base(self) -> str:
@@ -43,10 +40,7 @@ class AIProvider:
             if not base:
                 base = "https://generativelanguage.googleapis.com/v1beta/openai"
             elif "/openai" not in base:
-                if base.endswith("/v1beta") or base.endswith("/v1"):
-                    base += "/openai"
-                else:
-                    base += "/v1beta/openai"
+                base += "/openai" if base.endswith(("/v1", "/v1beta")) else "/v1beta/openai"
             return base.rstrip("/")
         if protocol == "anthropic":
             return (base or "https://api.anthropic.com/v1").rstrip("/")
@@ -64,8 +58,6 @@ class AIProvider:
                 headers["anthropic-version"] = "2023-06-01"
             else:
                 headers["Authorization"] = f"Bearer {self.api_key}"
-        if self._protocol() == "gemini":
-            headers["x-goog-api-client"] = "ai-gmail-organizer/1.4"
         return headers
 
     def _request(self, method: str, url: str, body: dict | None = None) -> dict:
@@ -85,14 +77,13 @@ class AIProvider:
 
     def list_models(self) -> list[str]:
         data = self._request("GET", f"{self._base()}/models")
-        models = data.get("data", [])
         result = []
-        for item in models:
+        for item in data.get("data", []):
             model_id = item.get("id") if isinstance(item, dict) else None
             if model_id:
                 result.append(str(model_id))
         if not result:
-            raise AIProviderError("The provider returned no models. This provider may not expose /models; its model must be supplied by the provider or a supported adapter.")
+            raise AIProviderError("The provider returned no models. This provider may not expose /models.")
         return result
 
     def resolve_model(self) -> str:
@@ -107,12 +98,10 @@ class AIProvider:
 
     def chat(self, user_text: str, system_text: str = "") -> str:
         model = self.resolve_model()
-        protocol = self._protocol()
-        if protocol == "anthropic":
+        if self._protocol() == "anthropic":
             body = {"model": model, "max_tokens": 2048, "system": system_text or "You are a helpful desktop assistant.", "messages": [{"role": "user", "content": user_text}]}
             data = self._request("POST", f"{self._base()}/messages", body)
-            content = data.get("content", [])
-            return "".join(item.get("text", "") for item in content if isinstance(item, dict) and item.get("type") == "text").strip()
+            return "".join(item.get("text", "") for item in data.get("content", []) if isinstance(item, dict) and item.get("type") == "text").strip()
         body = {"model": model, "messages": [{"role": "system", "content": system_text or "You are a helpful desktop assistant."}, {"role": "user", "content": user_text}]}
         data = self._request("POST", f"{self._base()}/chat/completions", body)
         try:
@@ -123,46 +112,38 @@ class AIProvider:
             content = "".join(part.get("text", "") for part in content if isinstance(part, dict))
         return str(content).strip()
 
-    def chat_with_image(self, user_text: str, image_base64: str, system_text: str = "") -> str:
-        """Send a screenshot to a vision-capable model using a common multimodal format."""
+    def vision_json(self, prompt: str, image_base64: str) -> dict:
+        """Send a screenshot and request one structured desktop action."""
         model = self.resolve_model()
         if self._protocol() == "anthropic":
-            body = {
-                "model": model,
-                "max_tokens": 2048,
-                "system": system_text or "You are a careful visual desktop assistant.",
-                "messages": [{"role": "user", "content": [
-                    {"type": "text", "text": user_text},
-                    {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": image_base64}},
-                ]}],
-            }
+            body = {"model": model, "max_tokens": 700, "system": "Return only valid JSON.", "messages": [{"role": "user", "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": image_base64}},
+            ]}]}
             data = self._request("POST", f"{self._base()}/messages", body)
-            content = data.get("content", [])
-            return "".join(item.get("text", "") for item in content if isinstance(item, dict) and item.get("type") == "text").strip()
-        image_url = f"data:image/png;base64,{image_base64}"
-        body = {
-            "model": model,
-            "messages": [{"role": "system", "content": system_text or "You are a careful visual desktop assistant."}, {"role": "user", "content": [
-                {"type": "text", "text": user_text},
-                {"type": "image_url", "image_url": {"url": image_url}},
-            ]}],
-        }
-        data = self._request("POST", f"{self._base()}/chat/completions", body)
+            raw = "".join(item.get("text", "") for item in data.get("content", []) if isinstance(item, dict) and item.get("type") == "text").strip()
+        else:
+            body = {"model": model, "messages": [{"role": "system", "content": "Return only valid JSON."}, {"role": "user", "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_base64}"}},
+            ]}]}
+            data = self._request("POST", f"{self._base()}/chat/completions", body)
+            try:
+                raw = str(data["choices"][0]["message"]["content"]).strip()
+            except (KeyError, IndexError, TypeError) as exc:
+                raise AIProviderError("The vision provider returned an unsupported response.") from exc
+        raw = raw.replace("```json", "").replace("```", "").strip()
         try:
-            content = data["choices"][0]["message"]["content"]
-        except (KeyError, IndexError, TypeError) as exc:
-            raise AIProviderError("The vision provider returned a response in an unsupported format.") from exc
-        if isinstance(content, list):
-            content = "".join(part.get("text", "") for part in content if isinstance(part, dict))
-        return str(content).strip()
+            result = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise AIProviderError("The vision model did not return valid JSON.") from exc
+        if not isinstance(result, dict):
+            raise AIProviderError("The vision model returned an invalid action format.")
+        return result
 
     def classify_json(self, payload: list[dict], system_text: str) -> list[dict]:
         result = self.chat(json.dumps(payload), system_text)
-        cleaned = result.strip()
-        if cleaned.startswith("```"):
-            cleaned = cleaned.strip("`")
-            if cleaned.lower().startswith("json"):
-                cleaned = cleaned[4:]
+        cleaned = result.replace("```json", "").replace("```", "").strip()
         try:
             parsed = json.loads(cleaned)
         except json.JSONDecodeError as exc:
