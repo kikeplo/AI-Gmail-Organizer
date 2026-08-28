@@ -24,8 +24,6 @@ for package in ('pyautogui', 'pyscreeze', 'PIL', 'pywinauto', 'playwright'):
     except Exception:
         pass
 
-# When the build script installs Chromium with PLAYWRIGHT_BROWSERS_PATH pointing
-# at this directory, the browser runtime is bundled into the distribution.
 playwright_local = project_root / '.playwright'
 if playwright_local.exists():
     datas.append((str(playwright_local), 'playwright'))
