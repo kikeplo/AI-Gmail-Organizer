@@ -1,7 +1,7 @@
 [project]
 name = "ai-gmail-organizer"
-version = "2.2.0"
-description = "Hybrid Windows desktop assistant for Gmail organization, local AI, desktop automation, and vision."
+version = "2.3.0"
+description = "Hybrid Windows desktop assistant for Gmail organization, local AI, desktop automation, browser automation, and vision."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -14,6 +14,7 @@ dependencies = [
     "pywin32>=311; sys_platform == 'win32'",
     "PyAutoGUI>=0.9.54; sys_platform == 'win32'",
     "pywinauto>=0.6.8,<1; sys_platform == 'win32'",
+    "playwright>=1.50,<2",
 ]
 
 [project.optional-dependencies]
