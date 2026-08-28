@@ -5,6 +5,7 @@ Write-Host 'The result is a folder containing the EXE plus browser/automation ru
 
 $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $Root
+$InCI = $env:GITHUB_ACTIONS -eq 'true'
 
 $Python = $null
 if ($env:VIRTUAL_ENV -and (Test-Path (Join-Path $env:VIRTUAL_ENV 'Scripts\python.exe'))) {
@@ -20,21 +21,26 @@ if (-not $Python) {
 }
 
 Write-Host "Using Python: $Python"
-& $Python -m pip install --upgrade pip
-if ($LASTEXITCODE -ne 0) { throw 'Failed to upgrade pip.' }
-& $Python -m pip install -e .
-if ($LASTEXITCODE -ne 0) { throw 'Failed to install project dependencies.' }
-& $Python -m pip install 'pyinstaller>=6,<7'
-if ($LASTEXITCODE -ne 0) { throw 'Failed to install PyInstaller.' }
-
 $PlaywrightPath = Join-Path $Root '.playwright'
 $env:PLAYWRIGHT_BROWSERS_PATH = $PlaywrightPath
-if (Test-Path $PlaywrightPath) { Remove-Item $PlaywrightPath -Recurse -Force }
-New-Item -ItemType Directory -Path $PlaywrightPath | Out-Null
 
-Write-Host 'Preparing Chromium...'
-& $Python -m playwright install chromium
-if ($LASTEXITCODE -ne 0) { throw 'Failed to prepare Chromium.' }
+if (-not $InCI) {
+    & $Python -m pip install --upgrade pip
+    if ($LASTEXITCODE -ne 0) { throw 'Failed to upgrade pip.' }
+    & $Python -m pip install -e .
+    if ($LASTEXITCODE -ne 0) { throw 'Failed to install project dependencies.' }
+    & $Python -m pip install 'pyinstaller>=6,<7'
+    if ($LASTEXITCODE -ne 0) { throw 'Failed to install PyInstaller.' }
+
+    if (Test-Path $PlaywrightPath) { Remove-Item $PlaywrightPath -Recurse -Force }
+    New-Item -ItemType Directory -Path $PlaywrightPath | Out-Null
+    Write-Host 'Preparing Chromium...'
+    & $Python -m playwright install chromium
+    if ($LASTEXITCODE -ne 0) { throw 'Failed to prepare Chromium.' }
+} else {
+    if (-not (Test-Path $PlaywrightPath)) { throw "CI Playwright runtime is missing: $PlaywrightPath" }
+    Write-Host 'CI mode: reusing preinstalled Python dependencies and Playwright runtime.'
+}
 
 Write-Host 'Building portable application folder...' -ForegroundColor Cyan
 & $Python -m PyInstaller packaging\AI-Gmail-Organizer.spec --clean --noconfirm
@@ -47,9 +53,6 @@ $BrowserDir = Join-Path $AppDir 'playwright'
 if (-not (Test-Path $AppDir)) { throw "Missing application folder: $AppDir" }
 if (-not (Test-Path $Exe)) { throw "Missing launcher: $Exe" }
 
-# Keep the browser runtime beside the launcher. Python modules such as PyAutoGUI,
-# pywinauto and Pillow are bundled into the PyInstaller archive and therefore do
-# not need to exist as loose directories in the application folder.
 if (Test-Path $BrowserDir) { Remove-Item $BrowserDir -Recurse -Force }
 New-Item -ItemType Directory -Path $BrowserDir | Out-Null
 Copy-Item -Path (Join-Path $PlaywrightPath '*') -Destination $BrowserDir -Recurse -Force
