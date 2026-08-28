@@ -1,6 +1,6 @@
 [project]
 name = "ai-gmail-organizer"
-version = "3.1.0"
+version = "3.2.0"
 description = "Hybrid Windows desktop assistant for Gmail organization, local AI, desktop automation, browser automation, vision, reusable skills, learned procedures, autonomous task planning, and robust Windows app control."
 readme = "README.md"
 requires-python = ">=3.11"
