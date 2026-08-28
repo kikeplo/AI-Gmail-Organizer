@@ -1,35 +1,41 @@
 # Architecture Notes
 
-## v0.2
+## v0.3
 
-The application now has three clear layers:
+The application now has a real Gmail integration boundary while keeping provider-specific behavior outside the UI layer.
 
 ```text
-PySide6 Overlay
+Windows Overlay (PySide6)
+        │
+        ▼
+   CommandAgent
+      │      │
+      │      └── Optional OpenAI Responses API
       │
       ▼
-CommandAgent
+   GmailClient
       │
-      ├── Local demo mode
-      └── OpenAI Responses API
-
-Future tools
-      ├── Gmail API
-      └── Windows automation
+      ├── Google OAuth 2.0
+      ├── Local token persistence
+      └── Gmail API (read-only)
 ```
 
-The UI sends plain-language commands to `CommandAgent`. The agent returns a structured `AgentResponse`, keeping provider-specific logic outside the UI.
+### Gmail security boundary
 
-### Safety boundary
+The current OAuth scope is `gmail.readonly`. The application can retrieve message metadata and snippets, but v0.3 does not archive, label, delete, send, or otherwise modify messages.
 
-v0.2 only produces responses. It does not claim to have performed Gmail or Windows actions. Future tools should distinguish between read operations and state-changing operations, with confirmation required for destructive or externally visible actions.
+`credentials.json` and `token.json` are local-only and excluded by `.gitignore`.
 
-### Next architectural step
+### Command routing
 
-Add a Gmail service with OAuth and read-only message retrieval first. Once that is stable, introduce tool calling so natural-language commands can map to capabilities such as:
+The command agent first recognizes simple Gmail search intents such as:
 
-- `gmail.search_messages`
-- `gmail.get_message`
-- `gmail.archive_message`
-- `gmail.apply_label`
-- `windows.active_window`
+- unread mail → `is:unread`
+- starred mail → `is:starred`
+- sender search → `from:address@example.com`
+
+General natural-language requests can still be routed to the optional AI provider.
+
+## Next architectural step
+
+v0.4 should introduce a structured tool interface so the AI model can choose among typed tools instead of relying on keyword routing. Tool execution should return structured results to the UI and preserve an explicit confirmation boundary for actions that modify external state.
