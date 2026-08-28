@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication
 
 from app.setup.runtime_dependencies import check_dependencies, missing_required
 from app.ui.dependency_setup import DependencySetupDialog
@@ -47,9 +47,11 @@ def main() -> int:
 
     required_missing = missing_required()
     if required_missing:
-        detail = "\n".join(f"• {item.name}: {item.detail}" for item in required_missing)
-        QMessageBox.critical(None, "AI Gmail Organizer needs a component", "A required component is missing from this installation.\n\n" + detail + "\n\nInstall the latest self-contained build.")
-        return 1
+        # Show the friendly setup UI instead of exposing Python/package names.
+        DependencySetupDialog().exec()
+        required_missing = missing_required()
+        if required_missing:
+            return 1
 
     optional_missing = [item for item in check_dependencies() if not item.available and not item.required]
     if optional_missing:
