@@ -1,15 +1,22 @@
-"""Local memory and lightweight analytics for AI Gmail Organizer v0.7."""
+"""Local interaction history and lightweight usage analytics."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
-import sqlite3
 from datetime import datetime, timezone
 import os
+from pathlib import Path
+import sqlite3
 
-BASE_DIR = Path(__file__).resolve().parents[2]
-DEFAULT_DB = BASE_DIR / "data" / "assistant.db"
+
+def app_data_dir() -> Path:
+    root = os.getenv("LOCALAPPDATA")
+    path = Path(root) / "AI Gmail Organizer" if root else Path.home() / ".ai-gmail-organizer"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+DEFAULT_DB = app_data_dir() / "assistant.db"
 
 
 @dataclass(frozen=True)
@@ -22,11 +29,11 @@ class Interaction:
 
 
 class MemoryStore:
-    """Persist local interaction history without sending it to a remote service."""
+    """Persist interaction history locally on the current user's machine."""
 
     def __init__(self, db_path: str | Path | None = None) -> None:
         configured = os.getenv("MEMORY_DB_PATH")
-        self.db_path = Path(db_path or configured or DEFAULT_DB)
+        self.db_path = Path(configured) if configured else Path(db_path or DEFAULT_DB)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._initialize()
 
