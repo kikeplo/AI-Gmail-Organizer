@@ -1,4 +1,4 @@
-"""Interactive desktop overlay for v0.3."""
+"""Interactive desktop overlay for v0.4."""
 
 from __future__ import annotations
 
@@ -18,11 +18,11 @@ class OverlayWindow(QMainWindow):
         self.setWindowFlag(Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setMinimumSize(760, 500)
-        self.resize(860, 600)
+        self.resize(900, 620)
         self._drag_position = None
         self._agent = CommandAgent()
         self._build_ui()
-        self._add_message("assistant", "Hi! I’m your AI Gmail Organizer. Try 'Find my unread Gmail emails' to connect and search your inbox.")
+        self._add_message("assistant", "Hi! I’m your AI Gmail Organizer. Try ‘Organize my inbox’ for an AI-powered category summary, or search for unread emails.")
 
     def _build_ui(self) -> None:
         root = QWidget()
@@ -43,7 +43,7 @@ class OverlayWindow(QMainWindow):
         title_block.setSpacing(2)
         title = QLabel("AI Gmail Organizer")
         title.setObjectName("title")
-        subtitle = QLabel("v0.3 • Gmail connection")
+        subtitle = QLabel("v0.4 • AI inbox organization")
         subtitle.setObjectName("subtitle")
         title_block.addWidget(title)
         title_block.addWidget(subtitle)
@@ -60,6 +60,14 @@ class OverlayWindow(QMainWindow):
         header.addWidget(close_button)
         panel_layout.addLayout(header)
 
+        quick_row = QHBoxLayout()
+        for label, command in (("Organize inbox", "Organize my inbox"), ("Unread", "Find my unread Gmail emails"), ("Recent", "Show recent Gmail emails")):
+            button = QPushButton(label)
+            button.setObjectName("quickButton")
+            button.clicked.connect(lambda _checked=False, value=command: self._submit(value))
+            quick_row.addWidget(button)
+        panel_layout.addLayout(quick_row)
+
         self.messages = QVBoxLayout()
         self.messages.setSpacing(10)
         self.messages.addStretch()
@@ -73,12 +81,12 @@ class OverlayWindow(QMainWindow):
         scroll.setObjectName("messagesScroll")
         panel_layout.addWidget(scroll, 1)
 
-        hint = QLabel("Ask to search Gmail. The first Gmail command opens Google's secure OAuth sign-in.")
+        hint = QLabel("Read-only analysis: the classifier never changes your inbox in v0.4.")
         hint.setObjectName("hint")
         panel_layout.addWidget(hint)
         input_row = QHBoxLayout()
         self.command_input = QLineEdit()
-        self.command_input.setPlaceholderText("e.g. Find unread emails from recruiters")
+        self.command_input.setPlaceholderText("e.g. Organize my inbox")
         self.command_input.setClearButtonEnabled(True)
         self.send_button = QPushButton("Send")
         self.send_button.setObjectName("sendButton")
@@ -100,6 +108,8 @@ class OverlayWindow(QMainWindow):
             QScrollArea#messagesScroll { background: transparent; }
             QScrollBar:vertical { width: 7px; background: transparent; }
             QScrollBar::handle:vertical { background: rgba(255,255,255,35); border-radius: 3px; }
+            QPushButton#quickButton { color: #CDD4E1; background: rgba(255,255,255,8); border: 1px solid rgba(255,255,255,16); border-radius: 10px; padding: 8px 12px; }
+            QPushButton#quickButton:hover { background: rgba(79,108,247,30); }
             QLabel#messageUser, QLabel#messageAssistant { color: #E7EBF2; font-size: 14px; padding: 12px 14px; border-radius: 14px; }
             QLabel#messageUser { background: rgba(79,108,247,55); }
             QLabel#messageAssistant { background: rgba(255,255,255,10); }
@@ -119,6 +129,10 @@ class OverlayWindow(QMainWindow):
         label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         self.messages.insertWidget(self.messages.count() - 1, label)
+
+    def _submit(self, command: str) -> None:
+        self.command_input.setText(command)
+        self._on_send()
 
     def _on_send(self) -> None:
         command = self.command_input.text().strip()
