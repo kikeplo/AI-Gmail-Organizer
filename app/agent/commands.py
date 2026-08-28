@@ -24,10 +24,10 @@ class CommandAgent:
     """Route user requests to the appropriate application service."""
 
     def __init__(self, gmail: GmailClient | None = None, memory: MemoryStore | None = None) -> None:
-        self.model = os.getenv("OPENAI_MODEL")
-        self.api_key = os.getenv("OPENAI_API_KEY")
+        self.model = os.getenv("OPENAI_MODEL", "").strip()
+        self.api_key = os.getenv("OPENAI_API_KEY", "").strip()
         self.base_url = os.getenv("OPENAI_BASE_URL", "").strip() or None
-        self.provider = os.getenv("AI_PROVIDER", "OpenAI").strip() or "OpenAI"
+        self.provider = os.getenv("AI_PROVIDER", "OpenAI-compatible").strip() or "OpenAI-compatible"
         self.gmail = gmail or GmailClient()
         self.classifier = InboxClassifier()
         self.actions = GmailActionService(self.gmail)
@@ -56,7 +56,7 @@ class CommandAgent:
             response = self._handle_inbox_organization()
         elif self._looks_like_gmail_search(lowered):
             response = self._handle_gmail_search(command)
-        elif not self.api_key or not self.model:
+        elif not self.api_key and not self.base_url:
             response = AgentResponse(self._local_response(command), mode="demo")
         else:
             response = self._ask_ai(command)
@@ -66,17 +66,33 @@ class CommandAgent:
 
     def _client(self):
         from openai import OpenAI
-        kwargs = {"api_key": self.api_key}
+        # A dummy value lets OpenAI-compatible, keyless endpoints work too.
+        kwargs = {"api_key": self.api_key or "not-required"}
         if self.base_url:
             kwargs["base_url"] = self.base_url
         return OpenAI(**kwargs)
 
+    def _resolve_model(self, client) -> str:
+        if self.model:
+            return self.model
+        # Many OpenAI-compatible APIs expose /models. If they do, automatically
+        # use the first available model so the user does not need to enter one.
+        models = client.models.list()
+        data = getattr(models, "data", None) or []
+        if not data:
+            raise RuntimeError("The provider did not return any models. Enter a model name in the API settings, or use a provider that exposes /models.")
+        model_id = getattr(data[0], "id", None)
+        if not model_id:
+            raise RuntimeError("The provider returned an invalid model list. Enter a model name manually.")
+        return str(model_id)
+
     def _ask_ai(self, command: str) -> AgentResponse:
         try:
             client = self._client()
-            response = client.responses.create(
-                model=self.model,
-                input=[
+            model = self._resolve_model(client)
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
                     {
                         "role": "system",
                         "content": (
@@ -89,20 +105,21 @@ class CommandAgent:
                     {"role": "user", "content": command},
                 ],
             )
-            return AgentResponse(response.output_text, mode=f"ai:{self.provider}")
+            content = response.choices[0].message.content or ""
+            return AgentResponse(content, mode=f"ai:{self.provider}")
         except Exception as exc:  # pragma: no cover
             message = str(exc)
             lowered = message.casefold()
             if "429" in lowered or "insufficient_quota" in lowered or "credit_balance_exhausted" in lowered:
                 return AgentResponse(
                     f"The {self.provider} provider rejected the request because its quota/credits are exhausted.\n\n"
-                    "Check the provider account or switch provider, API base URL, or model in Settings.\n\n"
-                    f"Provider: {self.provider}\nModel: {self.model}",
+                    "Switch provider/API base URL or check the provider account.\n\n"
+                    f"Model: {self.model or 'Auto-detect'}",
                     mode="quota_error",
                 )
             return AgentResponse(
                 f"The {self.provider} AI provider could not complete the request.\n\n{message}\n\n"
-                "Check the API key, API base URL, and model in Settings.",
+                "Check the API key and base URL. If the provider does not expose /models, enter its model name in Settings.",
                 mode="error",
             )
 
@@ -169,12 +186,7 @@ class CommandAgent:
         try:
             self.gmail.connect()
         except Exception as exc:
-            return AgentResponse(
-                "Gmail is not connected yet.\n\n"
-                f"Connection setup: {exc}\n\n"
-                "Open Settings to configure Gmail, then run the command again.",
-                mode="gmail_setup",
-            )
+            return AgentResponse("Gmail is not connected yet.\n\nConnection setup: " + str(exc) + "\n\nOpen Settings to configure Gmail, then run the command again.", mode="gmail_setup")
         return None
 
     def _handle_inbox_organization(self) -> AgentResponse:
