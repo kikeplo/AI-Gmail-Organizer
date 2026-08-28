@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import os
 
 from app.gmail.client import GmailMessage
@@ -19,11 +20,13 @@ class ClassifiedMessage:
 
 
 class InboxClassifier:
-    """Classify inbox messages with an LLM when configured, or with local rules."""
+    """Classify inbox messages with an OpenAI-compatible provider when configured."""
 
     def __init__(self) -> None:
         self.model = os.getenv("OPENAI_MODEL")
         self.api_key = os.getenv("OPENAI_API_KEY")
+        self.base_url = os.getenv("OPENAI_BASE_URL", "").strip() or None
+        self.provider = os.getenv("AI_PROVIDER", "OpenAI").strip() or "OpenAI"
 
     def classify(self, messages: list[GmailMessage]) -> list[ClassifiedMessage]:
         if not messages:
@@ -32,7 +35,7 @@ class InboxClassifier:
             try:
                 return self._classify_with_ai(messages)
             except Exception:
-                pass
+                return [self._local_classification(message) for message in messages]
         return [self._local_classification(message) for message in messages]
 
     def summarize(self, classified: list[ClassifiedMessage]) -> str:
@@ -53,7 +56,6 @@ class InboxClassifier:
 
     def _classify_with_ai(self, messages: list[GmailMessage]) -> list[ClassifiedMessage]:
         from openai import OpenAI
-        import json
 
         payload = [
             {
@@ -64,10 +66,13 @@ class InboxClassifier:
             }
             for message in messages
         ]
-        client = OpenAI(api_key=self.api_key)
-        response = client.responses.create(
+        kwargs = {"api_key": self.api_key}
+        if self.base_url:
+            kwargs["base_url"] = self.base_url
+        client = OpenAI(**kwargs)
+        response = client.chat.completions.create(
             model=self.model,
-            input=[
+            messages=[
                 {
                     "role": "system",
                     "content": (
@@ -80,7 +85,8 @@ class InboxClassifier:
             ],
         )
 
-        results = {item["id"]: item for item in json.loads(response.output_text)}
+        content = response.choices[0].message.content or "[]"
+        results = {item["id"]: item for item in json.loads(content)}
         classified: list[ClassifiedMessage] = []
         for message in messages:
             item = results.get(message.id, {})
