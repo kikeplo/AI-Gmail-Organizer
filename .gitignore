@@ -15,6 +15,10 @@ build/
 *.sqlite
 *.sqlite3
 
+# OAuth credentials and tokens - never commit these
+credentials.json
+token.json
+
 # OS
 .DS_Store
 Thumbs.db
