@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import os
 
-from app.ai.provider import AIProvider, AIProviderError
+from app.ai.router import SmartAIRouter
+from app.ai.provider import AIProviderError
 from app.gmail.client import GmailMessage
 
 CATEGORIES = ("important", "work", "personal", "promotions", "newsletters", "other")
@@ -20,20 +20,18 @@ class ClassifiedMessage:
 
 
 class InboxClassifier:
-    """Classify inbox messages through the configured AI provider."""
+    """Classify inbox messages through the smart local/cloud AI router."""
 
     def __init__(self) -> None:
-        self.provider = AIProvider()
+        self.router = SmartAIRouter()
 
     def classify(self, messages: list[GmailMessage]) -> list[ClassifiedMessage]:
         if not messages:
             return []
-        if self.provider.configured:
-            try:
-                return self._classify_with_ai(messages)
-            except AIProviderError:
-                return [self._local_classification(message) for message in messages]
-        return [self._local_classification(message) for message in messages]
+        try:
+            return self._classify_with_ai(messages)
+        except AIProviderError:
+            return [self._local_classification(message) for message in messages]
 
     def summarize(self, classified: list[ClassifiedMessage]) -> str:
         if not classified:
@@ -57,7 +55,7 @@ class InboxClassifier:
             "Classify each email into exactly one category: important, work, personal, promotions, "
             "newsletters, or other. Return JSON only as an array of objects with id, category, confidence, reason."
         )
-        items = self.provider.classify_json(payload, system)
+        items = self.router.classify_json(payload, system)
         results = {item["id"]: item for item in items if isinstance(item, dict) and "id" in item}
         classified: list[ClassifiedMessage] = []
         for message in messages:
