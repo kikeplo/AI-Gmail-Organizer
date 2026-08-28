@@ -1,4 +1,4 @@
-"""Gmail client for AI Gmail Organizer v0.5."""
+"""Gmail integration and controlled inbox operations."""
 
 from __future__ import annotations
 
@@ -15,9 +15,13 @@ SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/gmail.modify",
 ]
-BASE_DIR = Path(__file__).resolve().parents[2]
-CREDENTIALS_FILE = BASE_DIR / os.getenv("GMAIL_CREDENTIALS_FILE", "credentials.json")
-TOKEN_FILE = BASE_DIR / os.getenv("GMAIL_TOKEN_FILE", "token.json")
+
+
+def app_data_dir() -> Path:
+    root = os.getenv("LOCALAPPDATA")
+    path = Path(root) / "AI Gmail Organizer" if root else Path.home() / ".ai-gmail-organizer"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 @dataclass(frozen=True)
@@ -34,6 +38,9 @@ class GmailClient:
 
     def __init__(self) -> None:
         self._service: Resource | None = None
+        self.config_dir = app_data_dir()
+        self.credentials_file = self.config_dir / os.getenv("GMAIL_CREDENTIALS_FILE", "credentials.json")
+        self.token_file = self.config_dir / os.getenv("GMAIL_TOKEN_FILE", "token.json")
 
     @property
     def is_connected(self) -> bool:
@@ -41,41 +48,34 @@ class GmailClient:
 
     def connect(self) -> None:
         creds: Credentials | None = None
-        if TOKEN_FILE.exists():
-            creds = Credentials.from_authorized_user_file(str(TOKEN_FILE), SCOPES)
+        if self.token_file.exists():
+            creds = Credentials.from_authorized_user_file(str(self.token_file), SCOPES)
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         elif not creds or not creds.valid:
-            if not CREDENTIALS_FILE.exists():
+            if not self.credentials_file.exists():
                 raise FileNotFoundError(
-                    "credentials.json was not found. Create a Google OAuth desktop "
-                    "client and place the downloaded file at the project root."
+                    f"Gmail OAuth credentials were not found at {self.credentials_file}. "
+                    "Place your Google Desktop OAuth JSON there and run the app again."
                 )
-            flow = InstalledAppFlow.from_client_secrets_file(str(CREDENTIALS_FILE), SCOPES)
+            flow = InstalledAppFlow.from_client_secrets_file(str(self.credentials_file), SCOPES)
             creds = flow.run_local_server(port=0)
-        TOKEN_FILE.write_text(creds.to_json(), encoding="utf-8")
+        self.token_file.write_text(creds.to_json(), encoding="utf-8")
         self._service = build("gmail", "v1", credentials=creds)
 
     def list_messages(self, query: str = "", max_results: int = 10) -> list[GmailMessage]:
         self._require_connection()
-        response = (
-            self._service.users().messages().list(
-                userId="me", q=query or None, maxResults=max_results
-            ).execute()
-        )
+        response = self._service.users().messages().list(
+            userId="me", q=query or None, maxResults=max_results
+        ).execute()
         messages: list[GmailMessage] = []
         for item in response.get("messages", []):
-            message = (
-                self._service.users()
-                .messages()
-                .get(
-                    userId="me",
-                    id=item["id"],
-                    format="metadata",
-                    metadataHeaders=["From", "Subject"],
-                )
-                .execute()
-            )
+            message = self._service.users().messages().get(
+                userId="me",
+                id=item["id"],
+                format="metadata",
+                metadataHeaders=["From", "Subject"],
+            ).execute()
             headers = {
                 header["name"].lower(): header.get("value", "")
                 for header in message.get("payload", {}).get("headers", [])
