@@ -22,7 +22,7 @@ class OverlayWindow(QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("AI Gmail Organizer v1.5")
+        self.setWindowTitle("AI Gmail Organizer v1.6")
         self.setWindowFlag(Qt.FramelessWindowHint)
         self.setWindowFlag(Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
@@ -44,7 +44,7 @@ class OverlayWindow(QMainWindow):
         panel_layout = QVBoxLayout(panel); panel_layout.setContentsMargins(24, 20, 24, 20); panel_layout.setSpacing(14)
         header = QHBoxLayout(); title_block = QVBoxLayout(); title_block.setSpacing(2)
         title = QLabel("AI Gmail Organizer"); title.setObjectName("title")
-        subtitle = QLabel("v1.5 • Gmail + Windows + local memory + vision"); subtitle.setObjectName("subtitle")
+        subtitle = QLabel("v1.6 • Gmail + Windows + local memory + vision"); subtitle.setObjectName("subtitle")
         title_block.addWidget(title); title_block.addWidget(subtitle)
         self.status = QLabel("● Ready"); self.status.setObjectName("status")
         settings = QPushButton("Settings"); settings.setObjectName("settingsButton"); settings.clicked.connect(self._open_settings)
@@ -78,8 +78,10 @@ class OverlayWindow(QMainWindow):
             QScrollBar:vertical { width: 7px; background: transparent; }
             QScrollBar::handle:vertical { background: rgba(255,255,255,55); border-radius: 3px; min-height: 24px; }
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
-            QPushButton#quickButton { color: #E1E6EE; background: rgba(255,255,255,10); border: 1px solid rgba(255,255,255,24); border-radius: 11px; padding: 9px 12px; }
-            QPushButton#quickButton:hover { color: #FFFFFF; background: rgba(79,108,247,45); }
+            QPushButton#quickButton, QPushButton#pauseButton, QPushButton#stopButton { color: #E1E6EE; background: rgba(255,255,255,10); border: 1px solid rgba(255,255,255,24); border-radius: 11px; padding: 9px 12px; }
+            QPushButton#quickButton:hover, QPushButton#pauseButton:hover { color: #FFFFFF; background: rgba(79,108,247,45); }
+            QPushButton#stopButton:hover { color: #FFFFFF; background: rgba(210,70,70,70); }
+            QPushButton#pauseButton:disabled, QPushButton#stopButton:disabled { color: #667085; background: rgba(255,255,255,6); }
             QLabel#messageUser, QLabel#messageAssistant { color: #F1F5F9; font-size: 14px; padding: 13px 15px; border-radius: 15px; }
             QLabel#messageUser { background: rgba(65,86,170,225); border: 1px solid rgba(120,145,255,70); }
             QLabel#messageAssistant { background: rgba(38,45,60,235); border: 1px solid rgba(255,255,255,18); }
@@ -100,7 +102,12 @@ class OverlayWindow(QMainWindow):
         layout.addLayout(quick_row)
         self.messages = QVBoxLayout(); self.messages.setSpacing(10); self.messages.addStretch()
         host = QWidget(); host.setLayout(self.messages); self.scroll = QScrollArea(); self.scroll.setWidget(host); self.scroll.setWidgetResizable(True); self.scroll.setFrameShape(QFrame.NoFrame); self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff); self.scroll.setObjectName("messagesScroll"); layout.addWidget(self.scroll, 1)
-        self.hint = QLabel("Gmail changes require confirmation. Desktop clicks and typing operate only on your local Windows session."); self.hint.setObjectName("hint"); layout.addWidget(self.hint)
+        self.hint = QLabel("Gmail changes require confirmation. Desktop actions are performed on your local Windows session."); self.hint.setObjectName("hint"); layout.addWidget(self.hint)
+        control_row = QHBoxLayout()
+        self.pause_button = QPushButton("⏸ Pause"); self.pause_button.setObjectName("pauseButton"); self.pause_button.setEnabled(False); self.pause_button.clicked.connect(self._toggle_pause)
+        self.stop_button = QPushButton("⛔ Stop"); self.stop_button.setObjectName("stopButton"); self.stop_button.setEnabled(False); self.stop_button.clicked.connect(self._stop_task)
+        control_row.addWidget(self.pause_button); control_row.addWidget(self.stop_button); control_row.addStretch()
+        layout.addLayout(control_row)
         input_row = QHBoxLayout(); self.command_input = QLineEdit(); self.command_input.setPlaceholderText("Ask me to work with Gmail, Windows, or your screen…"); self.command_input.setClearButtonEnabled(True)
         self.send_button = QPushButton("Send"); self.send_button.setObjectName("sendButton"); self.send_button.setMinimumWidth(94); self.send_button.clicked.connect(self._on_send); self.command_input.returnPressed.connect(self._on_send); input_row.addWidget(self.command_input); input_row.addWidget(self.send_button); layout.addLayout(input_row)
         return page
@@ -131,18 +138,34 @@ class OverlayWindow(QMainWindow):
     def _on_send(self) -> None:
         command = self.command_input.text().strip()
         if not command or self._thread is not None: return
-        self._add_message("user", command); self.command_input.clear(); self.send_button.setEnabled(False); self.send_button.setText("Working…"); self.status.setText("● Working"); self.hint.setText("Processing in the background — the window remains responsive.")
-        self._thread = QThread(self); self._worker = CommandWorker(self._agent, command); self._worker.moveToThread(self._thread); self._thread.started.connect(self._worker.run); self._worker.finished.connect(self._on_worker_finished); self._worker.failed.connect(self._on_worker_failed); self._worker.finished.connect(self._thread.quit); self._worker.failed.connect(self._thread.quit); self._thread.finished.connect(self._cleanup_worker); self._thread.start()
+        self._add_message("user", command); self.command_input.clear(); self.send_button.setEnabled(False); self.send_button.setText("Working…"); self.status.setText("● Working"); self.hint.setText("Working in the background. You can pause or stop a visual task at any time."); self.pause_button.setEnabled(True); self.stop_button.setEnabled(True)
+        self._thread = QThread(self); self._worker = CommandWorker(self._agent, command); self._worker.moveToThread(self._thread); self._thread.started.connect(self._worker.run); self._worker.status.connect(self._on_worker_status); self._worker.finished.connect(self._on_worker_finished); self._worker.failed.connect(self._on_worker_failed); self._worker.finished.connect(self._thread.quit); self._worker.failed.connect(self._thread.quit); self._thread.finished.connect(self._cleanup_worker); self._thread.start()
+
+    def _on_worker_status(self, message: str) -> None:
+        self.status.setText("● " + message)
+        self.hint.setText(message)
+
+    def _toggle_pause(self) -> None:
+        if self._thread is None: return
+        if self._agent.vision.pause_requested:
+            self._agent.resume_task(); self.pause_button.setText("⏸ Pause"); self.status.setText("● Working"); self.hint.setText("Task resumed.")
+        else:
+            self._agent.pause_task(); self.pause_button.setText("▶ Resume"); self.status.setText("● Paused"); self.hint.setText("Task paused. Resume when you are ready.")
+
+    def _stop_task(self) -> None:
+        if self._thread is None: return
+        self._agent.stop_task(); self.stop_button.setEnabled(False); self.pause_button.setEnabled(False); self.status.setText("● Stopping…"); self.hint.setText("Stopping the current task…")
 
     def _on_worker_finished(self, response) -> None:
         self._add_message("assistant", response.text); self._pending_action = response.pending_action
         if response.mode == "confirmation" and self._pending_action is not None:
-            reply = QMessageBox.question(self, "Confirm Gmail action", response.text, QMessageBox.Yes | QMessageBox.No, QMessageBox.No); follow_up = self._agent.confirm_action(self._pending_action, reply == QMessageBox.Yes); self._add_message("assistant", follow_up.text); self._pending_action = None
+            reply = QMessageBox.question(self, "Confirm action", response.text, QMessageBox.Yes | QMessageBox.No, QMessageBox.No); follow_up = self._agent.confirm_action(self._pending_action, reply == QMessageBox.Yes); self._add_message("assistant", follow_up.text); self._pending_action = None
         self._set_ready_state()
 
     def _on_worker_failed(self, message: str) -> None: self._add_message("assistant", f"The command could not be completed.\n\n{message}"); self._set_ready_state()
 
-    def _set_ready_state(self) -> None: self.send_button.setEnabled(True); self.send_button.setText("Send"); self.status.setText("● Ready"); self.hint.setText("Gmail changes require confirmation. Desktop clicks and typing operate only on your local Windows session.")
+    def _set_ready_state(self) -> None:
+        self.send_button.setEnabled(True); self.send_button.setText("Send"); self.status.setText("● Ready"); self.hint.setText("Gmail changes require confirmation. Desktop actions are performed on your local Windows session."); self.pause_button.setEnabled(False); self.stop_button.setEnabled(False); self.pause_button.setText("⏸ Pause")
 
     def _cleanup_worker(self) -> None:
         if self._worker is not None: self._worker.deleteLater()
@@ -157,8 +180,7 @@ class OverlayWindow(QMainWindow):
             load_dotenv(ENV_FILE, override=True)
             self._agent = CommandAgent()
             self._add_message("assistant", "Settings updated. The new AI provider is active now — no restart required.")
-        self.history_view.store = self._memory
-        self.usage_view.store = self._memory
+        self.history_view.store = self._memory; self.usage_view.store = self._memory
 
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.LeftButton: self._drag_position = event.globalPosition().toPoint() - self.frameGeometry().topLeft(); event.accept()
