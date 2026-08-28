@@ -1,4 +1,4 @@
-"""Command routing across Gmail, Windows, vision, AI, and local memory."""
+"""Command routing across Gmail, Windows, the AI provider, local memory, and vision control."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from app.gmail.action_service import GmailActionService
 from app.gmail.client import GmailClient
 from app.memory.store import MemoryStore
 from app.windows.action_router import WindowsActionRouter
-from app.windows.computer_use import ComputerUseError, VisionComputerUse
+from app.vision.agent import VisionAgent, VisionAgentError
 
 
 @dataclass(frozen=True)
@@ -21,15 +21,15 @@ class AgentResponse:
 
 
 class CommandAgent:
-    """Route user requests to application services and visual desktop control."""
+    """Route requests to Gmail, Windows, vision, AI, or local memory."""
 
     def __init__(self, gmail: GmailClient | None = None, memory: MemoryStore | None = None) -> None:
         self.ai = AIProvider()
         self.gmail = gmail or GmailClient()
         self.actions = GmailActionService(self.gmail)
         self.windows = WindowsActionRouter()
-        self.vision = VisionComputerUse(self.ai)
         self.memory = memory or MemoryStore()
+        self.vision = VisionAgent(self.ai, self.windows.tools)
 
     def respond(self, command: str) -> AgentResponse:
         command = command.strip()
@@ -45,7 +45,12 @@ class CommandAgent:
             return remembered
 
         if self._looks_like_visual_task(lowered):
-            response = self._handle_visual_task(command)
+            try:
+                response = AgentResponse(self.vision.run(command), mode="vision")
+            except VisionAgentError as exc:
+                response = AgentResponse(str(exc), mode="vision_error")
+            except Exception as exc:
+                response = AgentResponse(f"Visual task failed.\n\n{exc}", mode="vision_error")
         else:
             windows_response = self.windows.handle(command)
             if windows_response is not None:
@@ -64,35 +69,21 @@ class CommandAgent:
         self.memory.remember(command, response.text, response.mode)
         return response
 
-    def _handle_visual_task(self, command: str) -> AgentResponse:
-        try:
-            result = self.vision.run(command)
-            return AgentResponse(result, mode="computer_use")
-        except (ComputerUseError, AIProviderError) as exc:
-            return AgentResponse(f"Visual desktop control could not complete the request.\n\n{exc}", mode="computer_use_error")
-        except Exception as exc:  # pragma: no cover
-            return AgentResponse(f"Visual desktop control failed.\n\n{exc}", mode="computer_use_error")
-
     @staticmethod
     def _looks_like_visual_task(text: str) -> bool:
         visual_terms = (
-            "click", "double click", "right click", "move the mouse", "move mouse", "type into",
-            "type in", "press a key", "press enter", "scroll", "open the tab", "go to the tab",
-            "navigate", "on screen", "on the screen", "look at my screen", "use the mouse",
-            "use my mouse", "control my computer", "control the computer", "open gmail", "go to gmail",
-            "open chrome", "open browser", "find on screen", "screen and click", "visually",
+            "click", "double-click", "double click", "right-click", "right click", "on the screen",
+            "on screen", "look at", "find on screen", "find on the screen", "navigate", "open the tab",
+            "select the tab", "go to the tab", "on gmail", "in chrome", "in the browser", "visually",
         )
         return any(term in text for term in visual_terms)
 
     def _ask_ai(self, command: str) -> AgentResponse:
         try:
-            content = self.ai.chat(
-                command,
-                "You are the desktop assistant for AI Gmail Organizer. Gmail, Windows, visual computer control, and local memory capabilities are available. Never claim that an external action occurred unless the application explicitly reports success.",
-            )
+            content = self.ai.chat(command, "You are the desktop assistant for AI Gmail Organizer. Gmail, Windows, visual desktop control, and local memory capabilities are available. Never claim an external action occurred unless the application explicitly reports success.")
             return AgentResponse(content, mode=f"ai:{self.ai.provider or self.ai._protocol()}")
         except AIProviderError as exc:
-            return AgentResponse(f"The configured AI provider could not complete the request.\n\n{exc}\n\nCheck the API key and base URL and try again.", mode="error")
+            return AgentResponse(f"The configured AI provider could not complete the request.\n\n{exc}\n\nCheck the API key and base URL. The provider can be text-only or vision-capable; visual tasks require a model that accepts images.", mode="error")
         except Exception as exc:
             return AgentResponse(f"AI request failed.\n\n{exc}", mode="error")
 
@@ -103,12 +94,11 @@ class CommandAgent:
                 return AgentResponse("I do not have any saved interaction history yet.", mode="memory")
             lines = ["Recent local memory:", ""]
             for item in interactions:
-                lines.append(f"• {item.command or '(empty command)'}")
-                lines.append(f"  {item.mode}: {item.response.splitlines()[0]}")
+                lines.extend((f"• {item.command or '(empty command)'}", f"  {item.mode}: {item.response.splitlines()[0]}"))
             return AgentResponse("\n".join(lines), mode="memory")
         if "usage" in text or "analytics" in text or "stats" in text:
             counts = self.memory.mode_counts()
-            lines = [f"Local usage: {self.memory.count()} interaction(s)", ""]
+            lines = [f"Local usage: {self.memory.count()} interaction(s)", ""]]
             for mode, count in counts.items():
                 lines.append(f"{mode}: {count}")
             return AgentResponse("\n".join(lines), mode="analytics")
@@ -150,7 +140,7 @@ class CommandAgent:
     def confirm_action(self, action: object, confirmed: bool) -> AgentResponse:
         if not confirmed:
             return AgentResponse("Action cancelled. Your Gmail was not changed.", mode="cancelled")
-        completed = self.actions.execute_confirmed(action, confirmed=True)  # type: ignore[arg-type]
+        completed = self.actions.execute_confirmed(action, confirmed=True)
         return AgentResponse(f"Done. {completed} Gmail message(s) were updated.", mode="gmail_action")
 
     def _connect(self) -> AgentResponse | None:
@@ -194,15 +184,12 @@ class CommandAgent:
     def _to_gmail_query(command: str) -> str:
         text = command.casefold()
         queries: list[str] = []
-        if "unread" in text:
-            queries.append("is:unread")
-        if "starred" in text:
-            queries.append("is:starred")
+        if "unread" in text: queries.append("is:unread")
+        if "starred" in text: queries.append("is:starred")
         sender = re.search(r"from\s+([\w.+-]+@[\w.-]+)", text)
-        if sender:
-            queries.append(f"from:{sender.group(1)}")
+        if sender: queries.append(f"from:{sender.group(1)}")
         return " ".join(queries)
 
     @staticmethod
     def _local_response(command: str) -> str:
-        return "Demo mode is active. Configure an AI provider for general AI commands, or use the supported Gmail, Windows, and memory commands.\n\nReceived: " + command
+        return "Demo mode is active. Configure an AI provider for general AI commands, or use the supported Gmail, Windows, visual, and memory commands.\n\nReceived: " + command
