@@ -1,4 +1,4 @@
-"""Authenticated Gmail client for AI Gmail Organizer v0.3."""
+"""Gmail client for AI Gmail Organizer v0.5."""
 
 from __future__ import annotations
 
@@ -11,7 +11,10 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import Resource, build
 
-SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+SCOPES = [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.modify",
+]
 BASE_DIR = Path(__file__).resolve().parents[2]
 CREDENTIALS_FILE = BASE_DIR / os.getenv("GMAIL_CREDENTIALS_FILE", "credentials.json")
 TOKEN_FILE = BASE_DIR / os.getenv("GMAIL_TOKEN_FILE", "token.json")
@@ -19,8 +22,6 @@ TOKEN_FILE = BASE_DIR / os.getenv("GMAIL_TOKEN_FILE", "token.json")
 
 @dataclass(frozen=True)
 class GmailMessage:
-    """Small presentation-friendly representation of a Gmail message."""
-
     id: str
     thread_id: str
     sender: str = ""
@@ -29,7 +30,7 @@ class GmailMessage:
 
 
 class GmailClient:
-    """Handle Gmail OAuth and safe read-only inbox operations."""
+    """Handle Gmail OAuth and controlled inbox operations."""
 
     def __init__(self) -> None:
         self._service: Resource | None = None
@@ -39,16 +40,9 @@ class GmailClient:
         return self._service is not None
 
     def connect(self) -> None:
-        """Authorize the user and create a Gmail API service.
-
-        Google creates/refreshes ``token.json`` locally. The credential files are
-        deliberately ignored by Git and must never be committed.
-        """
         creds: Credentials | None = None
-
         if TOKEN_FILE.exists():
             creds = Credentials.from_authorized_user_file(str(TOKEN_FILE), SCOPES)
-
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         elif not creds or not creds.valid:
@@ -57,26 +51,18 @@ class GmailClient:
                     "credentials.json was not found. Create a Google OAuth desktop "
                     "client and place the downloaded file at the project root."
                 )
-            flow = InstalledAppFlow.from_client_secrets_file(
-                str(CREDENTIALS_FILE), SCOPES
-            )
+            flow = InstalledAppFlow.from_client_secrets_file(str(CREDENTIALS_FILE), SCOPES)
             creds = flow.run_local_server(port=0)
-
         TOKEN_FILE.write_text(creds.to_json(), encoding="utf-8")
         self._service = build("gmail", "v1", credentials=creds)
 
     def list_messages(self, query: str = "", max_results: int = 10) -> list[GmailMessage]:
-        """Return recent Gmail messages matching an optional Gmail search query."""
-        if not self._service:
-            raise RuntimeError("Gmail is not connected. Use connect() first.")
-
+        self._require_connection()
         response = (
-            self._service.users()
-            .messages()
-            .list(userId="me", q=query or None, maxResults=max_results)
-            .execute()
+            self._service.users().messages().list(
+                userId="me", q=query or None, maxResults=max_results
+            ).execute()
         )
-
         messages: list[GmailMessage] = []
         for item in response.get("messages", []):
             message = (
@@ -103,5 +89,33 @@ class GmailClient:
                     snippet=message.get("snippet", ""),
                 )
             )
-
         return messages
+
+    def create_label(self, name: str) -> str:
+        self._require_connection()
+        response = self._service.users().labels().create(
+            userId="me",
+            body={"name": name, "labelListVisibility": "labelShow", "messageListVisibility": "show"},
+        ).execute()
+        return response["id"]
+
+    def list_labels(self) -> list[dict[str, str]]:
+        self._require_connection()
+        response = self._service.users().labels().list(userId="me").execute()
+        return [{"id": label["id"], "name": label["name"]} for label in response.get("labels", [])]
+
+    def apply_label(self, message_id: str, label_id: str) -> None:
+        self._require_connection()
+        self._service.users().messages().modify(
+            userId="me", id=message_id, body={"addLabelIds": [label_id]}
+        ).execute()
+
+    def archive_message(self, message_id: str) -> None:
+        self._require_connection()
+        self._service.users().messages().modify(
+            userId="me", id=message_id, body={"removeLabelIds": ["INBOX"]}
+        ).execute()
+
+    def _require_connection(self) -> None:
+        if not self._service:
+            raise RuntimeError("Gmail is not connected. Use connect() first.")
