@@ -1,31 +1,36 @@
 # AI Gmail Organizer
 
-AI-powered Windows desktop overlay for intelligent Gmail organization and productivity automation.
+AI-powered Windows desktop assistant for intelligent Gmail organization and productivity automation.
 
-## v0.4 — AI inbox organization
+## v0.5 — confirmed Gmail actions
 
-v0.4 adds read-only inbox analysis. The app can retrieve a small inbox sample, classify messages into practical categories, and present a summary in the desktop overlay. With `OPENAI_API_KEY` configured, classification is delegated to an AI model; without it, a deterministic local classifier keeps the feature usable without external AI credentials.
+v0.5 moves beyond read-only inbox analysis. The application can now plan Gmail mutations such as archiving messages and applying labels, then requires explicit user confirmation before executing them.
 
 ### Current capabilities
 
 - Borderless, always-on-top Windows overlay
 - Chat-style command interface with quick actions
 - Gmail OAuth 2.0 desktop authentication
-- Read-only Gmail search and inbox retrieval
+- Gmail search and inbox retrieval
 - AI or local-rule email classification
 - Categories: important, work, personal, promotions, newsletters, other
-- Inbox category counts and top-message explanations
-- Safe v0.4 design: no Gmail messages are modified
-- Automated classifier and agent tests
+- Archive Gmail messages
+- Create/find and apply Gmail labels
+- Explicit confirmation dialog before every Gmail mutation
+- Cancellation path that leaves Gmail unchanged
+- Local credential/token protection through `.gitignore`
+- Automated tests
 
 ### Example commands
 
 ```text
 Organize my inbox
-Find unread Gmail emails
-Show my starred emails
-Find emails from recruiter@example.com
+Find my unread Gmail emails
+Archive my unread Gmail emails
+Label my unread Gmail emails Work
 ```
+
+For mutating commands, the app first shows what will happen. Gmail is only changed after the user selects **Yes** in the confirmation dialog.
 
 ### Google Cloud setup
 
@@ -34,6 +39,8 @@ Find emails from recruiter@example.com
 3. Download the OAuth client JSON as `credentials.json` in the project root.
 4. Run the application and issue a Gmail command.
 5. Complete Google's browser-based authorization. The app stores the local token in `token.json`.
+
+For v0.5 the OAuth scope includes `gmail.modify`, which is required for label and archive operations.
 
 **Never commit `credentials.json` or `token.json`.** They are ignored by `.gitignore`.
 
@@ -46,11 +53,10 @@ OPENAI_API_KEY=your_key_here
 OPENAI_MODEL=gpt-5.6-luna
 ```
 
-Without an AI key, v0.4 falls back to local classification rules.
+Without an AI key, the deterministic command path remains available for supported Gmail operations.
 
 ## Roadmap
 
-- **v0.5:** Labels, archive actions, and explicit confirmation flow
 - **v0.6:** Windows automation tools
 - **v0.7:** Persistent local memory and analytics
 - **v1.0:** Polished desktop assistant with Gmail + Windows workflows
@@ -75,4 +81,4 @@ Run tests with:
 pytest
 ```
 
-See `docs/architecture.md` for the architecture and roadmap.
+See `docs/architecture.md` for the architecture and safety boundaries.
