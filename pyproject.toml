@@ -1,7 +1,7 @@
 [project]
 name = "ai-gmail-organizer"
-version = "0.4.0"
-description = "A Windows desktop AI overlay for organizing Gmail and automating productivity workflows."
+version = "0.5.0"
+description = "A Windows desktop AI assistant for organizing Gmail with confirmation-protected actions."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
