@@ -2,9 +2,9 @@
 
 AI-powered Windows desktop assistant for intelligent Gmail organization and productivity automation.
 
-## v0.6 — Windows automation
+## v0.7 — local memory & analytics
 
-v0.6 adds a Windows automation layer to the existing Gmail assistant. The application can inspect the active desktop window and perform a small set of explicit window-management actions through structured tools.
+v0.7 adds a privacy-friendly local memory layer. The assistant stores command history and response metadata in a local SQLite database so sessions can retain lightweight context without requiring a hosted database.
 
 ### Current capabilities
 
@@ -18,22 +18,41 @@ v0.6 adds a Windows automation layer to the existing Gmail assistant. The applic
 - Explicit confirmation dialog before every Gmail mutation
 - Windows active-window inspection
 - Windows minimize, maximize, and restore actions
-- Safe executable launching helper without shell command strings
-- Platform guard so Windows-only tools fail clearly elsewhere
+- Persistent local interaction history in SQLite
+- Local usage analytics by response mode
+- History and analytics commands in the overlay
 - Automated tests
 
-### Example commands
+### Memory commands
+
+```text
+Show my history
+What did I ask recently?
+Show usage analytics
+Show my stats
+```
+
+Memory is stored locally in `data/assistant.db` and is excluded from version control. No hosted memory service is required.
+
+### Gmail commands
+
+```text
+Find my unread Gmail emails
+Organize my inbox
+Archive my unread Gmail emails
+Label my unread Gmail emails Work
+```
+
+Gmail mutations require explicit confirmation before the message state is changed.
+
+### Windows commands
 
 ```text
 What window is active?
 Minimize the active window
 Maximize the active window
 Restore the active window
-Find my unread Gmail emails
-Archive my unread Gmail emails
 ```
-
-Gmail mutations still require explicit confirmation. Windows window-management commands in v0.6 are limited to the supported operations above.
 
 ### Google Cloud setup
 
@@ -43,7 +62,7 @@ Gmail mutations still require explicit confirmation. Windows window-management c
 4. Run the application and issue a Gmail command.
 5. Complete Google's browser-based authorization. The app stores the local token in `token.json`.
 
-For the Gmail mutation features, the OAuth scope includes `gmail.modify`.
+For Gmail mutation features, the OAuth scope includes `gmail.modify`.
 
 **Never commit `credentials.json` or `token.json`.** They are ignored by `.gitignore`.
 
@@ -58,14 +77,9 @@ OPENAI_MODEL=gpt-5.6-luna
 
 Without an AI key, supported Gmail and Windows intents still use deterministic routing.
 
-## Roadmap
-
-- **v0.7:** Persistent local memory and analytics
-- **v1.0:** Polished desktop assistant with Gmail + Windows workflows
-
 ## Tech stack
 
-Python · PySide6 · OpenAI Responses API · Gmail API · Google OAuth 2.0 · pywin32 · pytest
+Python · PySide6 · OpenAI Responses API · Gmail API · Google OAuth 2.0 · SQLite · pywin32 · pytest
 
 ## Run locally
 
@@ -84,3 +98,7 @@ pytest
 ```
 
 See `docs/architecture.md` for the architecture and safety boundaries.
+
+## Roadmap
+
+- **v1.0:** Polished desktop assistant with Gmail + Windows workflows
