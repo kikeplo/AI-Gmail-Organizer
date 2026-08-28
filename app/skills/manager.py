@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from app.memory.store import DEFAULT_DB
 from app.skills.registry import Skill, SkillRegistry
 
 
@@ -16,7 +17,7 @@ class SkillMatch:
 class SkillManager:
     """Discover, compose, and track reusable skills without executing actions itself."""
 
-    def __init__(self, db_path) -> None:
+    def __init__(self, db_path=DEFAULT_DB) -> None:
         self.registry = SkillRegistry(db_path)
 
     def discover(self, request: str, limit: int = 5) -> list[SkillMatch]:
