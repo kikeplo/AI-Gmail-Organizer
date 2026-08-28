@@ -1,15 +1,14 @@
-"""Vision-guided desktop agent with automatic local fallback."""
+"""Vision-guided desktop agent with safety-aware action permissions."""
 
 from __future__ import annotations
 
 import base64
-import json
 import tempfile
 import time
 from pathlib import Path
 
-from app.ai.local_engine import LocalAIEngine, LocalAIError
-from app.ai.provider import AIProvider, AIProviderError
+from app.ai.provider import AIProvider
+from app.agent.permissions import PermissionPolicy
 from app.windows.tools import WindowsTools
 
 
@@ -18,20 +17,15 @@ class VisionAgentError(RuntimeError):
 
 
 class VisionAgent:
-    """Observe, act, and verify using cloud vision first and local vision as fallback."""
+    """Observe the screen, choose an allowed action, execute it, and continue until verified done."""
 
     def __init__(self, provider: AIProvider | None = None, tools: WindowsTools | None = None) -> None:
         self.provider = provider or AIProvider()
         self.tools = tools or WindowsTools()
-        self.local = LocalAIEngine()
+        self.permissions = PermissionPolicy()
         self.max_steps = 12
         self._stopped = False
         self._paused = False
-        self._last_backend = ""
-
-    @property
-    def pause_requested(self) -> bool:
-        return self._paused
 
     def stop(self) -> None:
         self._stopped = True
@@ -42,71 +36,42 @@ class VisionAgent:
     def resume(self) -> None:
         self._paused = False
 
-    def run(self, goal: str, on_status=None) -> object:
+    def run(self, goal: str, progress=None) -> str:
+        if not self.provider.configured:
+            raise VisionAgentError("Configure a vision-capable AI provider first.")
         if not goal.strip():
             raise VisionAgentError("Please describe what you want me to do on the screen.")
-        if not self.provider.configured and not self.local.available():
-            raise VisionAgentError("No vision engine is available. Configure a vision-capable AI provider or install a local vision model.")
 
         self._stopped = False
         for step in range(1, self.max_steps + 1):
-            self._wait_if_paused()
             if self._stopped:
-                return self._result("Task stopped. No further desktop actions were taken.", False)
+                return "Task stopped. No further desktop actions were taken."
+            while self._paused and not self._stopped:
+                time.sleep(0.1)
+            if self._stopped:
+                return "Task stopped."
 
-            if on_status:
-                on_status(f"Looking at the screen… (step {step})")
             image = self.tools.screenshot()
-            decision = self._decide(goal, image, on_status)
-            action = str(decision.get("action", "done")).strip().lower()
+            decision = self._decide(goal, image)
+            action = str(decision.get("action", "done")).casefold()
             message = str(decision.get("message", ""))
+            if progress:
+                progress(f"Step {step}: {message or action}")
 
-            if on_status:
-                on_status(f"Step {step}: {message or action}")
             if action == "done":
-                return self._result(message or "Task completed.", False)
+                return message or "Task completed."
             if action == "wait":
                 time.sleep(min(max(float(decision.get("seconds", 1)), 0.2), 5.0))
                 continue
-            if action in {"delete", "send", "submit", "purchase", "checkout"}:
-                return self._result("I stopped before a potentially consequential action. Please perform the final action manually.", True)
+            if self.permissions.requires_confirmation(action):
+                return f"I paused before {action}. This action requires your confirmation before I can continue."
 
             self._execute_action(action, decision)
             time.sleep(0.35)
-            if on_status:
-                on_status("Verifying the result…")
 
-        return self._result("I reached the maximum number of visual steps, so I stopped safely.", False)
+        return "I reached the maximum number of visual steps. The task was stopped to avoid uncontrolled automation."
 
-    def _wait_if_paused(self) -> None:
-        while self._paused and not self._stopped:
-            time.sleep(0.1)
-
-    def _decide(self, goal: str, image, on_status=None) -> dict:
-        prompt = (
-            "You control a Windows desktop using one screenshot at a time. Return ONLY valid JSON with one action.\n"
-            "Goal: " + goal + "\n"
-            "Available actions: click(x,y), double_click(x,y), right_click(x,y), type(text), press(key), "
-            "hotkey(keys), scroll(amount), wait(seconds), done.\n"
-            "Use screenshot pixel coordinates. Choose the smallest next action. Never choose send, submit, delete, purchase, or checkout. "
-            "For done, include a concise message."
-        )
-        if self.provider.configured:
-            try:
-                result = self._decide_cloud(prompt, image)
-                self._last_backend = "cloud"
-                return result
-            except (AIProviderError, OSError) as exc:
-                if on_status:
-                    on_status("Cloud vision unavailable — trying local vision…")
-        try:
-            result = self.local.vision_json(prompt, image)
-            self._last_backend = "local"
-            return result
-        except LocalAIError as exc:
-            raise VisionAgentError(f"Vision could not analyze the screen. Cloud vision and local vision were unavailable.\n\n{exc}") from exc
-
-    def _decide_cloud(self, prompt: str, image) -> dict:
+    def _decide(self, goal: str, image) -> dict:
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as handle:
             temp_path = Path(handle.name)
         try:
@@ -114,6 +79,16 @@ class VisionAgent:
             encoded = base64.b64encode(temp_path.read_bytes()).decode("ascii")
         finally:
             temp_path.unlink(missing_ok=True)
+
+        prompt = (
+            "You control a Windows desktop using screenshots. Return ONLY valid JSON with one action.\n"
+            "Goal: " + goal + "\n"
+            "Available actions: click(x,y), double_click(x,y), right_click(x,y), type(text), "
+            "press(key), hotkey(keys), scroll(amount), wait(seconds), done.\n"
+            "Use coordinates in the screenshot's pixel coordinate system. Prefer the smallest next step. "
+            "Never choose or attempt to bypass confirmation for send, submit, delete, purchase, upload, download, "
+            "or other consequential actions. For done, include a concise message."
+        )
         return self.provider.vision_json(prompt, encoded)
 
     def _execute_action(self, action: str, decision: dict) -> None:
@@ -136,7 +111,3 @@ class VisionAgent:
             self.tools.scroll(int(decision.get("amount", -5)))
         else:
             raise VisionAgentError(f"Unsupported visual action: {action}")
-
-    @staticmethod
-    def _result(text: str, needs_confirmation: bool) -> object:
-        return type("VisionResult", (), {"text": text, "needs_confirmation": needs_confirmation})()
