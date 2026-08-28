@@ -61,15 +61,23 @@ class OverlayWindow(QMainWindow):
         settings = QPushButton("Settings")
         settings.setObjectName("settingsButton")
         settings.clicked.connect(self._open_settings)
+        minimize = QPushButton("—")
+        minimize.setObjectName("minimizeButton")
+        minimize.setFixedSize(38, 38)
+        minimize.setToolTip("Minimize")
+        minimize.clicked.connect(self.showMinimized)
         close = QPushButton("×")
         close.setObjectName("closeButton")
         close.setFixedSize(38, 38)
+        close.setToolTip("Close")
         close.clicked.connect(self.close)
         header.addLayout(title_block)
         header.addStretch()
         header.addWidget(self.status)
         header.addSpacing(8)
         header.addWidget(settings)
+        header.addSpacing(4)
+        header.addWidget(minimize)
         header.addSpacing(4)
         header.addWidget(close)
         panel_layout.addLayout(header)
@@ -98,7 +106,8 @@ class OverlayWindow(QMainWindow):
             QTabBar::tab:selected { color: #FFFFFF; background: rgba(79,108,247,48); }
             QPushButton#settingsButton { color: #E1E6EE; background: rgba(255,255,255,10); border: 1px solid rgba(255,255,255,24); border-radius: 11px; padding: 9px 12px; }
             QPushButton#settingsButton:hover { color: #FFFFFF; background: rgba(79,108,247,45); }
-            QPushButton#closeButton { color: #E1E6EE; background: rgba(255,255,255,10); border: none; border-radius: 11px; font-size: 23px; }
+            QPushButton#minimizeButton, QPushButton#closeButton { color: #E1E6EE; background: rgba(255,255,255,10); border: none; border-radius: 11px; font-size: 21px; }
+            QPushButton#minimizeButton:hover { background: rgba(255,255,255,28); color: #FFFFFF; }
             QPushButton#closeButton:hover { background: rgba(255,80,80,45); color: #FFFFFF; }
             QLabel#section { color: #E3E8F0; font-size: 12px; font-weight: 700; }
             QLabel#hint { color: #A6AFBE; font-size: 11px; padding: 2px 4px; }
