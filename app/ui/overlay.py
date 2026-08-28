@@ -22,7 +22,7 @@ class OverlayWindow(QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("AI Gmail Organizer")
+        self.setWindowTitle("AI Gmail Organizer v1.1")
         self.setWindowFlag(Qt.FramelessWindowHint)
         self.setWindowFlag(Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
@@ -44,7 +44,7 @@ class OverlayWindow(QMainWindow):
         panel_layout = QVBoxLayout(panel); panel_layout.setContentsMargins(24, 20, 24, 20); panel_layout.setSpacing(14)
         header = QHBoxLayout(); title_block = QVBoxLayout(); title_block.setSpacing(2)
         title = QLabel("AI Gmail Organizer"); title.setObjectName("title")
-        subtitle = QLabel("v1.0 • Gmail + Windows + local memory"); subtitle.setObjectName("subtitle")
+        subtitle = QLabel("v1.1 • Gmail + Windows + local memory"); subtitle.setObjectName("subtitle")
         title_block.addWidget(title); title_block.addWidget(subtitle)
         self.status = QLabel("● Ready"); self.status.setObjectName("status")
         settings = QPushButton("Settings"); settings.setObjectName("settingsButton"); settings.clicked.connect(self._open_settings)
@@ -107,20 +107,14 @@ class OverlayWindow(QMainWindow):
 
     @staticmethod
     def _clean_ai_text(text: str) -> str:
-        """Convert common Markdown formatting into clean native chat text."""
         text = text.replace("\r\n", "\n").replace("\r", "\n")
-        # Remove horizontal-rule-only lines and heading markers.
         text = re.sub(r"^\s*([-*_])(?:\s*\1){2,}\s*$", "", text, flags=re.MULTILINE)
         text = re.sub(r"^\s*#{1,6}\s*", "", text, flags=re.MULTILINE)
-        # Turn Markdown bullets into one consistent native bullet.
         text = re.sub(r"^\s*[-*+]\s+", "• ", text, flags=re.MULTILINE)
-        # Remove bold/italic markers without removing the actual words.
         text = text.replace("**", "").replace("__", "")
         text = re.sub(r"(?<!\w)\*([^\n*]+)\*(?!\w)", r"\1", text)
         text = re.sub(r"(?<!\w)_([^\n_]+)_(?!\w)", r"\1", text)
-        # Remove inline code fences/backticks.
         text = text.replace("```", "").replace("`", "")
-        # Normalize excessive blank lines.
         text = re.sub(r"\n{3,}", "\n\n", text)
         return text.strip()
 
