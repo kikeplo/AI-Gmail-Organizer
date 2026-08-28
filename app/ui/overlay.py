@@ -1,9 +1,9 @@
-"""Interactive desktop overlay for v0.4."""
+"""Interactive desktop overlay for v0.5."""
 
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
 
 from app.agent.commands import CommandAgent
 
@@ -18,11 +18,12 @@ class OverlayWindow(QMainWindow):
         self.setWindowFlag(Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setMinimumSize(760, 500)
-        self.resize(900, 620)
+        self.resize(920, 640)
         self._drag_position = None
         self._agent = CommandAgent()
+        self._pending_action = None
         self._build_ui()
-        self._add_message("assistant", "Hi! I’m your AI Gmail Organizer. Try ‘Organize my inbox’ for an AI-powered category summary, or search for unread emails.")
+        self._add_message("assistant", "Hi! I’m your AI Gmail Organizer. I can now search, classify, label, and archive Gmail with confirmation before changes.")
 
     def _build_ui(self) -> None:
         root = QWidget()
@@ -43,7 +44,7 @@ class OverlayWindow(QMainWindow):
         title_block.setSpacing(2)
         title = QLabel("AI Gmail Organizer")
         title.setObjectName("title")
-        subtitle = QLabel("v0.4 • AI inbox organization")
+        subtitle = QLabel("v0.5 • confirmed Gmail actions")
         subtitle.setObjectName("subtitle")
         title_block.addWidget(title)
         title_block.addWidget(subtitle)
@@ -61,7 +62,7 @@ class OverlayWindow(QMainWindow):
         panel_layout.addLayout(header)
 
         quick_row = QHBoxLayout()
-        for label, command in (("Organize inbox", "Organize my inbox"), ("Unread", "Find my unread Gmail emails"), ("Recent", "Show recent Gmail emails")):
+        for label, command in (("Organize inbox", "Organize my inbox"), ("Unread", "Find my unread Gmail emails"), ("Recent", "Show recent Gmail emails"), ("Archive unread", "Archive my unread Gmail emails")):
             button = QPushButton(label)
             button.setObjectName("quickButton")
             button.clicked.connect(lambda _checked=False, value=command: self._submit(value))
@@ -81,12 +82,12 @@ class OverlayWindow(QMainWindow):
         scroll.setObjectName("messagesScroll")
         panel_layout.addWidget(scroll, 1)
 
-        hint = QLabel("Read-only analysis: the classifier never changes your inbox in v0.4.")
+        hint = QLabel("Mutating actions always show a confirmation dialog before Gmail is changed.")
         hint.setObjectName("hint")
         panel_layout.addWidget(hint)
         input_row = QHBoxLayout()
         self.command_input = QLineEdit()
-        self.command_input.setPlaceholderText("e.g. Organize my inbox")
+        self.command_input.setPlaceholderText("e.g. Archive my unread Gmail emails")
         self.command_input.setClearButtonEnabled(True)
         self.send_button = QPushButton("Send")
         self.send_button.setObjectName("sendButton")
@@ -100,26 +101,26 @@ class OverlayWindow(QMainWindow):
 
         self.setStyleSheet("""
             QWidget#root { background: transparent; }
-            QFrame#panel { background: rgba(20, 24, 34, 248); border: 1px solid rgba(255,255,255,28); border-radius: 22px; }
-            QLabel#title { color: #F7F8FA; font-size: 21px; font-weight: 700; }
-            QLabel#subtitle { color: #9DA5B4; font-size: 12px; }
-            QLabel#status { color: #81D88A; font-size: 12px; font-weight: 600; }
-            QLabel#hint { color: #747E90; font-size: 11px; padding: 2px 4px; }
-            QScrollArea#messagesScroll { background: transparent; }
-            QScrollBar:vertical { width: 7px; background: transparent; }
-            QScrollBar::handle:vertical { background: rgba(255,255,255,35); border-radius: 3px; }
-            QPushButton#quickButton { color: #CDD4E1; background: rgba(255,255,255,8); border: 1px solid rgba(255,255,255,16); border-radius: 10px; padding: 8px 12px; }
-            QPushButton#quickButton:hover { background: rgba(79,108,247,30); }
-            QLabel#messageUser, QLabel#messageAssistant { color: #E7EBF2; font-size: 14px; padding: 12px 14px; border-radius: 14px; }
-            QLabel#messageUser { background: rgba(79,108,247,55); }
-            QLabel#messageAssistant { background: rgba(255,255,255,10); }
-            QLineEdit { color: #F7F8FA; background: rgba(255,255,255,12); border: 1px solid rgba(255,255,255,22); border-radius: 12px; padding: 12px 14px; font-size: 14px; }
-            QLineEdit:focus { border: 1px solid rgba(120,150,255,150); }
-            QPushButton#sendButton { color: #FFFFFF; background: #4F6CF7; border: none; border-radius: 12px; padding: 10px 18px; font-weight: 700; }
-            QPushButton#sendButton:hover { background: #607BFA; }
-            QPushButton#sendButton:disabled { background: #30384E; }
-            QPushButton#closeButton { color: #D7DCE5; background: rgba(255,255,255,10); border: none; border-radius: 10px; font-size: 22px; }
-            QPushButton#closeButton:hover { background: rgba(255,80,80,40); }
+            QFrame#panel { background: rgba(20,24,34,248); border: 1px solid rgba(255,255,255,28); border-radius: 22px; }
+            QLabel#title { color:#F7F8FA; font-size:21px; font-weight:700; }
+            QLabel#subtitle { color:#9DA5B4; font-size:12px; }
+            QLabel#status { color:#81D88A; font-size:12px; font-weight:600; }
+            QLabel#hint { color:#747E90; font-size:11px; padding:2px 4px; }
+            QScrollArea#messagesScroll { background:transparent; }
+            QScrollBar:vertical { width:7px; background:transparent; }
+            QScrollBar::handle:vertical { background:rgba(255,255,255,35); border-radius:3px; }
+            QPushButton#quickButton { color:#CDD4E1; background:rgba(255,255,255,8); border:1px solid rgba(255,255,255,16); border-radius:10px; padding:8px 12px; }
+            QPushButton#quickButton:hover { background:rgba(79,108,247,30); }
+            QLabel#messageUser, QLabel#messageAssistant { color:#E7EBF2; font-size:14px; padding:12px 14px; border-radius:14px; }
+            QLabel#messageUser { background:rgba(79,108,247,55); }
+            QLabel#messageAssistant { background:rgba(255,255,255,10); }
+            QLineEdit { color:#F7F8FA; background:rgba(255,255,255,12); border:1px solid rgba(255,255,255,22); border-radius:12px; padding:12px 14px; font-size:14px; }
+            QLineEdit:focus { border:1px solid rgba(120,150,255,150); }
+            QPushButton#sendButton { color:#FFFFFF; background:#4F6CF7; border:none; border-radius:12px; padding:10px 18px; font-weight:700; }
+            QPushButton#sendButton:hover { background:#607BFA; }
+            QPushButton#sendButton:disabled { background:#30384E; }
+            QPushButton#closeButton { color:#D7DCE5; background:rgba(255,255,255,10); border:none; border-radius:10px; font-size:22px; }
+            QPushButton#closeButton:hover { background:rgba(255,80,80,40); }
         """)
 
     def _add_message(self, role: str, text: str) -> None:
@@ -144,8 +145,22 @@ class OverlayWindow(QMainWindow):
         self.send_button.setText("...")
         response = self._agent.respond(command)
         self._add_message("assistant", response.text)
+        self._pending_action = response.pending_action
         self.send_button.setEnabled(True)
         self.send_button.setText("Send")
+
+        if response.mode == "confirmation" and self._pending_action is not None:
+            reply = QMessageBox.question(
+                self,
+                "Confirm Gmail action",
+                response.text,
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            confirmed = reply == QMessageBox.Yes
+            follow_up = self._agent.confirm_action(self._pending_action, confirmed)
+            self._add_message("assistant", follow_up.text)
+            self._pending_action = None
 
     def mousePressEvent(self, event) -> None:  # type: ignore[override]
         if event.button() == Qt.LeftButton:
