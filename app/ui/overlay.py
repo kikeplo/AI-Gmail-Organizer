@@ -1,4 +1,4 @@
-"""Interactive desktop overlay for v0.2."""
+"""Interactive desktop overlay for v0.3."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ class OverlayWindow(QMainWindow):
         self._drag_position = None
         self._agent = CommandAgent()
         self._build_ui()
-        self._add_message("assistant", "Hi! I’m your AI Gmail Organizer. Try asking what you want to do with your inbox.")
+        self._add_message("assistant", "Hi! I’m your AI Gmail Organizer. Try 'Find my unread Gmail emails' to connect and search your inbox.")
 
     def _build_ui(self) -> None:
         root = QWidget()
@@ -43,7 +43,7 @@ class OverlayWindow(QMainWindow):
         title_block.setSpacing(2)
         title = QLabel("AI Gmail Organizer")
         title.setObjectName("title")
-        subtitle = QLabel("v0.2 • AI command surface")
+        subtitle = QLabel("v0.3 • Gmail connection")
         subtitle.setObjectName("subtitle")
         title_block.addWidget(title)
         title_block.addWidget(subtitle)
@@ -73,7 +73,7 @@ class OverlayWindow(QMainWindow):
         scroll.setObjectName("messagesScroll")
         panel_layout.addWidget(scroll, 1)
 
-        hint = QLabel("Ask about Gmail, your inbox, or a workflow you want to automate.")
+        hint = QLabel("Ask to search Gmail. The first Gmail command opens Google's secure OAuth sign-in.")
         hint.setObjectName("hint")
         panel_layout.addWidget(hint)
         input_row = QHBoxLayout()
