@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 import re
+from pathlib import Path
 from typing import Any
 
 
@@ -18,12 +20,16 @@ class BrowserResult:
 
 
 class PlaywrightController:
-    """Use real browser DOM elements before falling back to desktop vision."""
+    """Use real browser DOM elements with isolated, reusable-profile, or CDP sessions."""
 
     def __init__(self) -> None:
         self._playwright = None
         self.browser = None
+        self.context = None
         self.page = None
+        self.mode = os.getenv("BROWSER_MODE", "auto").strip().lower()
+        self.profile_dir = Path(os.getenv("BROWSER_USER_DATA_DIR", "")).expanduser() if os.getenv("BROWSER_USER_DATA_DIR") else None
+        self.cdp_url = os.getenv("BROWSER_CDP_URL", "http://127.0.0.1:9222").strip()
 
     def available(self) -> bool:
         try:
@@ -32,28 +38,61 @@ class PlaywrightController:
         except ImportError:
             return False
 
-    def start(self, headless: bool = False) -> None:
+    def start(self, headless: bool = False, mode: str | None = None) -> None:
         try:
             from playwright.sync_api import sync_playwright
         except ImportError as exc:
             raise BrowserAutomationError("Browser automation is not installed. Install Playwright to enable it.") from exc
         if self.page is not None:
             return
-        self._playwright = sync_playwright().start()
-        self.browser = self._playwright.chromium.launch(headless=headless)
-        context = self.browser.new_context()
-        self.page = context.new_page()
 
-    def stop(self) -> None:
+        selected_mode = (mode or self.mode or "auto").strip().lower()
+        self._playwright = sync_playwright().start()
         try:
-            if self.browser:
-                self.browser.close()
-            if self._playwright:
-                self._playwright.stop()
-        finally:
-            self.browser = None
-            self.page = None
-            self._playwright = None
+            if selected_mode in {"cdp", "auto", "existing"}:
+                try:
+                    self.browser = self._playwright.chromium.connect_over_cdp(self.cdp_url)
+                    self.context = self.browser.contexts[0] if self.browser.contexts else self.browser.new_context()
+                except Exception as exc:
+                    if selected_mode in {"cdp", "existing"}:
+                        raise BrowserAutomationError(
+                            "Couldn't connect to your existing Chrome session. "
+                            "You can use isolated mode instead, or start Chrome with remote debugging enabled."
+                        ) from exc
+
+            if self.context is None and selected_mode == "profile" and self.profile_dir:
+                self.profile_dir.mkdir(parents=True, exist_ok=True)
+                self.context = self._playwright.chromium.launch_persistent_context(
+                    str(self.profile_dir), headless=headless
+                )
+
+            if self.context is None:
+                self.browser = self._playwright.chromium.launch(headless=headless)
+                self.context = self.browser.new_context()
+
+            self.page = self.context.pages[0] if self.context.pages else self.context.new_page()
+        except Exception:
+            self.stop()
+            raise
+
+    def status(self) -> dict[str, str | bool]:
+        connected = self.page is not None
+        return {
+            "connected": connected,
+            "mode": self.mode,
+            "url": self.page.url if self.page else "",
+            "title": self.page.title() if self.page else "",
+            "cdp_url": self.cdp_url,
+        }
+
+    def start_gmail(self) -> BrowserResult:
+        if self.page is None:
+            self.start(headless=False)
+        if not self.page.url or self.page.url == "about:blank":
+            self.page.goto("https://mail.google.com/", wait_until="domcontentloaded", timeout=30_000)
+        elif "mail.google.com" not in self.page.url:
+            self.page.goto("https://mail.google.com/", wait_until="domcontentloaded", timeout=30_000)
+        return BrowserResult(f"Gmail is open in {self.page.title() or 'the browser'}.", "open_gmail")
 
     def navigate(self, url: str) -> BrowserResult:
         self._require_page()
@@ -69,9 +108,9 @@ class PlaywrightController:
             raise BrowserAutomationError("Please specify the text to click.")
         locator = self.page.get_by_text(target, exact=True).first
         if locator.count() == 0:
-            locator = self.page.get_by_role("button", name=target).first
+            locator = self.page.get_by_role("button", name=target, exact=True).first
         if locator.count() == 0:
-            locator = self.page.get_by_role("link", name=target).first
+            locator = self.page.get_by_role("link", name=target, exact=True).first
         if locator.count() == 0:
             raise BrowserAutomationError(f"Couldn't find a visible browser element named '{target}'.")
         locator.click()
@@ -108,6 +147,27 @@ class PlaywrightController:
             except Exception:
                 continue
         return {"title": self.page.title(), "url": self.page.url, "elements": elements}
+
+    def close(self) -> None:
+        self.stop()
+
+    def stop(self) -> None:
+        try:
+            if self.context and self.mode not in {"cdp", "existing", "auto"}:
+                self.context.close()
+        finally:
+            self.context = None
+            if self.browser and self.mode not in {"cdp", "existing", "auto"}:
+                self.browser.close()
+            self.browser = None
+            if self._playwright:
+                self._playwright.stop()
+            self._playwright = None
+            self.page = None
+
+    @staticmethod
+    def chrome_remote_debug_command() -> str:
+        return 'chrome.exe --remote-debugging-port=9222'
 
     def _require_page(self) -> None:
         if self.page is None:
