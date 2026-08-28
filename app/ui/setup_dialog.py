@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
 from app.ai.provider import AIProvider
 from app.config.user_settings import read_config, save_api_key, save_base_url, save_gmail_client_id, save_model, save_provider_name
 from app.gmail.client import GmailClient
+from app.ui.help_dialog import HelpDialog
 
 
 class _ModelLoader(QThread):
@@ -46,8 +47,6 @@ class _GoogleLogin(QThread):
 class GoogleSetupDialog(QDialog):
     """Plain-language, step-by-step Google OAuth setup for non-technical users."""
 
-    ask_assistant = Signal(str)
-
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Connect Gmail — One-time setup")
@@ -57,26 +56,25 @@ class GoogleSetupDialog(QDialog):
         title = QLabel("Connect your Gmail account")
         title.setStyleSheet("font-size: 22px; font-weight: 800; color: #F8FAFC;")
         layout.addWidget(title)
-        intro = QLabel("Google requires a small one-time setup before a desktop app can securely sign you in. You only need to do this once on this computer.")
+        intro = QLabel("This one-time setup lets the app use Google's normal secure sign-in. You can ask for help at any point.")
         intro.setWordWrap(True)
         intro.setStyleSheet("color: #CBD5E1; font-size: 12px;")
         layout.addWidget(intro)
 
         steps = QLabel(
             "<b>Step 1 — Open Google Cloud</b><br>"
-            "Click <b>Open Google Cloud</b> below and sign in with the Google account you want to use.<br><br>"
-            "<b>Step 2 — Create/select a project</b><br>"
-            "Create a project such as <b>AI Gmail Organizer</b>, or select an existing project.<br><br>"
-            "<b>Step 3 — Enable Gmail</b><br>"
-            "Go to <b>APIs & Services → Library</b>, search for <b>Gmail API</b>, and click <b>Enable</b>.<br><br>"
+            "Sign in with your Google account.<br><br>"
+            "<b>Step 2 — Create or select a project</b><br>"
+            "A project such as <b>AI Gmail Organizer</b> is fine.<br><br>"
+            "<b>Step 3 — Enable Gmail API</b><br>"
+            "Open <b>APIs & Services → Library</b>, search for <b>Gmail API</b>, then click <b>Enable</b>.<br><br>"
             "<b>Step 4 — Create a Desktop OAuth client</b><br>"
-            "Go to <b>Google Auth Platform → Clients → Create client</b>. Choose <b>Desktop app</b> and create it.<br><br>"
-            "<b>Step 5 — Copy the Client ID</b><br>"
-            "Copy the <b>Client ID</b> (usually ending in <b>.apps.googleusercontent.com</b>) and paste it below. "
-            "<b>Do not paste a Client Secret.</b>"
+            "Open <b>Google Auth Platform → Clients → Create client</b>, choose <b>Desktop app</b>, then create it.<br><br>"
+            "<b>Step 5 — Paste the Client ID</b><br>"
+            "Copy the Client ID ending in <b>.apps.googleusercontent.com</b>. Do not paste a Client Secret."
         )
         steps.setWordWrap(True)
-        steps.setStyleSheet("color: #E2E8F0; font-size: 12px; line-height: 1.5;")
+        steps.setStyleSheet("color: #E2E8F0; font-size: 12px;")
         layout.addWidget(steps)
 
         buttons = QHBoxLayout()
@@ -88,13 +86,13 @@ class GoogleSetupDialog(QDialog):
         buttons.addWidget(auth)
         layout.addLayout(buttons)
 
+        layout.addWidget(QLabel("Google Client ID"))
         self.client_id = QLineEdit(read_config().get("GMAIL_CLIENT_ID", ""))
         self.client_id.setPlaceholderText("Paste your Desktop app Client ID here")
-        layout.addWidget(QLabel("Google Client ID"))
         layout.addWidget(self.client_id)
 
         help_row = QHBoxLayout()
-        help_label = QLabel("Stuck on a step?")
+        help_label = QLabel("Need help?")
         help_button = QPushButton("Ask the Assistant")
         help_button.clicked.connect(self._ask)
         help_row.addWidget(help_label)
@@ -102,7 +100,7 @@ class GoogleSetupDialog(QDialog):
         help_row.addStretch()
         layout.addLayout(help_row)
 
-        note = QLabel("🔒 Your Google password is entered only on Google's website. The Organizer never sees it. The Client ID is an app identifier, not your password.")
+        note = QLabel("Your Google password is entered only on Google's website. The Organizer never sees your password.")
         note.setWordWrap(True)
         note.setStyleSheet("color: #AAB4C4; font-size: 11px;")
         layout.addWidget(note)
@@ -110,12 +108,13 @@ class GoogleSetupDialog(QDialog):
         row = QHBoxLayout()
         cancel = QPushButton("Cancel")
         cancel.clicked.connect(self.reject)
-        connect = QPushButton("Save & Sign in with Google")
-        connect.clicked.connect(self._save_and_connect)
+        connect = QPushButton("Save & continue")
+        connect.clicked.connect(self._save)
         row.addStretch()
         row.addWidget(cancel)
         row.addWidget(connect)
         layout.addLayout(row)
+
         self.setStyleSheet("""
             QDialog { background: #121620; color: #F1F5F9; }
             QLineEdit { color: #F7F8FA; background: #202738; border: 1px solid #3A4356; border-radius: 8px; padding: 10px; }
@@ -124,10 +123,13 @@ class GoogleSetupDialog(QDialog):
         """)
 
     def _ask(self) -> None:
-        self.ask_assistant.emit("Help me connect Gmail to AI Gmail Organizer. I am on the Google OAuth setup wizard and need help with the current step.")
-        self.accept()
+        try:
+            help_dialog = HelpDialog(self)
+            help_dialog.exec()
+        except Exception as exc:
+            QMessageBox.critical(self, "Help could not be opened", f"The help assistant could not be opened.\n\n{exc}")
 
-    def _save_and_connect(self) -> None:
+    def _save(self) -> None:
         client_id = self.client_id.text().strip()
         if not client_id:
             QMessageBox.information(self, "Client ID needed", "Please paste the Desktop app Client ID first. It normally ends with .apps.googleusercontent.com.")
@@ -196,16 +198,19 @@ class SetupDialog(QDialog):
         form.addRow("Gmail", google_row)
         layout.addLayout(form)
 
-        note = QLabel("Tip: AI settings apply immediately after Save. Gmail sign-in opens your normal browser — your password never goes into this app.")
+        note = QLabel("AI settings apply immediately after Save. Need help? The Gmail sign-in guide explains each step in plain language.")
         note.setWordWrap(True)
         note.setObjectName("settingsNote")
         layout.addWidget(note)
 
         button_row = QHBoxLayout()
+        help_button = QPushButton("Help")
+        help_button.clicked.connect(self._open_help)
         save = QPushButton("Save")
         save.clicked.connect(self._save)
         cancel = QPushButton("Cancel")
         cancel.clicked.connect(self.reject)
+        button_row.addWidget(help_button)
         button_row.addStretch()
         button_row.addWidget(cancel)
         button_row.addWidget(save)
@@ -227,6 +232,7 @@ class SetupDialog(QDialog):
         provider.provider = self.provider.text().strip()
         provider.api_key = self.api_key.text().strip()
         provider.base_url = self.base_url.text().strip()
+        provider.model = self.model.currentText().strip()
         return provider
 
     def _refresh_models(self) -> None:
@@ -268,7 +274,6 @@ class SetupDialog(QDialog):
         config = read_config()
         if not config.get("GMAIL_CLIENT_ID", "").strip():
             wizard = GoogleSetupDialog(self)
-            wizard.ask_assistant.connect(self._forward_assistant_help)
             if wizard.exec() != QDialog.Accepted:
                 return
         self.google_status.setText("Opening Google sign-in in your browser…")
@@ -278,18 +283,18 @@ class SetupDialog(QDialog):
         self._google_login.finished.connect(self._google_login.deleteLater)
         self._google_login.start()
 
-    def _forward_assistant_help(self, prompt: str) -> None:
-        parent = self.parent()
-        if parent is not None and hasattr(parent, "_submit"):
-            self.reject()
-            parent._submit(prompt)
-
     def _google_connected(self, message: str) -> None:
         self.google_status.setText("✓ Google account connected")
 
     def _google_failed(self, message: str) -> None:
-        self.google_status.setText("Sign-in needs attention — click again for help")
+        self.google_status.setText("Sign-in needs attention — click Help for guidance")
         QMessageBox.warning(self, "Google sign-in", message)
+
+    def _open_help(self) -> None:
+        try:
+            HelpDialog(self).exec()
+        except Exception as exc:
+            QMessageBox.critical(self, "Help could not be opened", f"The help window could not be opened.\n\n{exc}")
 
     def _save(self) -> None:
         try:
