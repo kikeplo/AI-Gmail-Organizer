@@ -26,6 +26,8 @@ class VisionAgent:
         self.max_steps = 12
         self._stopped = False
         self._paused = False
+        self.last_steps: list[dict] = []
+        self.last_goal: str = ""
 
     def stop(self) -> None:
         self._stopped = True
@@ -36,6 +38,10 @@ class VisionAgent:
     def resume(self) -> None:
         self._paused = False
 
+    @property
+    def pause_requested(self) -> bool:
+        return self._paused
+
     def run(self, goal: str, progress=None) -> str:
         if not self.provider.configured:
             raise VisionAgentError("Configure a vision-capable AI provider first.")
@@ -43,6 +49,8 @@ class VisionAgent:
             raise VisionAgentError("Please describe what you want me to do on the screen.")
 
         self._stopped = False
+        self.last_steps = []
+        self.last_goal = goal.strip()
         for step in range(1, self.max_steps + 1):
             if self._stopped:
                 return "Task stopped. No further desktop actions were taken."
@@ -55,6 +63,7 @@ class VisionAgent:
             decision = self._decide(goal, image)
             action = str(decision.get("action", "done")).casefold()
             message = str(decision.get("message", ""))
+            self.last_steps.append(self._safe_step_record(action, decision, message))
             if progress:
                 progress(f"Step {step}: {message or action}")
 
@@ -70,6 +79,22 @@ class VisionAgent:
             time.sleep(0.35)
 
         return "I reached the maximum number of visual steps. The task was stopped to avoid uncontrolled automation."
+
+    def _safe_step_record(self, action: str, decision: dict, message: str) -> dict:
+        record = {"action": action, "message": message}
+        if action in {"click", "double_click", "right_click"}:
+            if "x" in decision and "y" in decision:
+                record["target"] = {"x": int(decision["x"]), "y": int(decision["y"])}
+        elif action == "press":
+            record["key"] = str(decision.get("key", ""))
+        elif action == "hotkey":
+            keys = decision.get("keys", [])
+            if isinstance(keys, list):
+                record["keys"] = [str(k) for k in keys]
+        elif action == "scroll":
+            record["amount"] = int(decision.get("amount", -5))
+        # Never persist text that might contain passwords or other secrets.
+        return record
 
     def _decide(self, goal: str, image) -> dict:
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as handle:
