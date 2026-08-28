@@ -87,7 +87,7 @@ class UsageView(QWidget):
     def _mode_label(mode: str) -> str:
         mapping = {
             "gmail": "Gmail",
-            "gmail_action": "Gmail actions",
+            "gmail_action": "Gmail action completed",
             "gmail_error": "Gmail errors",
             "gmail_setup": "Gmail setup",
             "gmail_search": "Gmail search",
@@ -96,6 +96,7 @@ class UsageView(QWidget):
             "memory": "Memory",
             "demo": "Demo",
             "error": "Errors",
+            "quota_error": "AI quota errors",
         }
         return mapping.get(mode, mode.replace("_", " ").title())
 
@@ -109,7 +110,10 @@ class UsageView(QWidget):
         total = self.store.count()
         counts = self.store.mode_counts()
         ai_count = sum(value for mode, value in counts.items() if mode.startswith("ai:") or mode in {"error", "quota_error"})
-        gmail_count = sum(value for mode, value in counts.items() if "gmail" in mode or mode == "classification")
+        # A Gmail workflow is counted only after a confirmed action has
+        # actually been executed successfully. Searches, classifications,
+        # setup attempts, confirmations, and errors do not increment it.
+        gmail_count = counts.get("gmail_action", 0)
 
         title = QLabel("Usage")
         title.setObjectName("usageTitle")
@@ -121,7 +125,7 @@ class UsageView(QWidget):
         cards = QHBoxLayout()
         cards.addWidget(StatCard("Interactions", str(total), "Saved locally on this device"))
         cards.addWidget(StatCard("AI responses", str(ai_count), "Requests routed through your configured provider"))
-        cards.addWidget(StatCard("Gmail workflows", str(gmail_count), "Search, classification, and Gmail actions"))
+        cards.addWidget(StatCard("Gmail actions", str(gmail_count), "Successfully completed Gmail changes"))
         self.layout.addLayout(cards)
 
         section = QLabel("Activity by mode")
