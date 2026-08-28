@@ -1,0 +1,25 @@
+[project]
+name = "ai-gmail-organizer"
+version = "0.1.0"
+description = "A Windows desktop AI overlay for organizing Gmail and automating productivity workflows."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "PySide6>=6.8,<7",
+    "python-dotenv>=1.0,<2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<9",
+]
+
+[project.scripts]
+ai-gmail-organizer = "main:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
