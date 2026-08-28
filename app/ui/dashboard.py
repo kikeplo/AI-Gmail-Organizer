@@ -62,6 +62,16 @@ class UsageView(QWidget):
         super().__init__()
         self.store = store
         self.layout = QVBoxLayout(self)
+        self.setStyleSheet("""
+            QLabel#usageTitle, QLabel#usageSubtitle, QLabel#usageSection,
+            QLabel#usageModeName, QLabel#usageModeValue { color: #F8FAFC; }
+            QLabel#usageTitle { font-size: 20px; font-weight: 700; }
+            QLabel#usageSubtitle { color: #D6DCE7; font-size: 12px; }
+            QLabel#usageSection { font-size: 12px; font-weight: 700; margin-top: 8px; }
+            QLabel#usageModeName, QLabel#usageModeValue { font-size: 12px; }
+            QProgressBar { background: rgba(255,255,255,18); border: none; border-radius: 5px; height: 10px; }
+            QProgressBar::chunk { background: #6D86F7; border-radius: 5px; }
+        """)
         self.refresh()
 
     def refresh(self) -> None:
@@ -73,36 +83,38 @@ class UsageView(QWidget):
 
         total = self.store.count()
         counts = self.store.mode_counts()
-        openai_count = counts.get("openai", 0)
+        ai_count = sum(value for mode, value in counts.items() if mode != "classification" and "gmail" not in mode)
         gmail_count = sum(value for mode, value in counts.items() if "gmail" in mode or mode == "classification")
 
         title = QLabel("Usage")
-        title.setObjectName("viewTitle")
+        title.setObjectName("usageTitle")
         subtitle = QLabel("A quick look at how you use the assistant")
-        subtitle.setObjectName("viewSubtitle")
+        subtitle.setObjectName("usageSubtitle")
         self.layout.addWidget(title)
         self.layout.addWidget(subtitle)
 
         cards = QHBoxLayout()
         cards.addWidget(StatCard("Interactions", str(total), "Saved locally on this device"))
-        cards.addWidget(StatCard("AI responses", str(openai_count), "Requests routed through the configured AI provider"))
+        cards.addWidget(StatCard("AI responses", str(ai_count), "Requests routed through the configured AI provider"))
         cards.addWidget(StatCard("Gmail workflows", str(gmail_count), "Search, classification, and Gmail actions"))
         self.layout.addLayout(cards)
 
         section = QLabel("Activity by mode")
-        section.setObjectName("section")
+        section.setObjectName("usageSection")
         self.layout.addWidget(section)
 
         max_count = max(counts.values(), default=1)
         for mode, count in counts.items():
             row = QHBoxLayout()
             name = QLabel(mode.replace("_", " ").title())
+            name.setObjectName("usageModeName")
             name.setMinimumWidth(130)
             bar = QProgressBar()
             bar.setRange(0, max_count)
             bar.setValue(count)
             bar.setTextVisible(False)
             value = QLabel(str(count))
+            value.setObjectName("usageModeValue")
             value.setMinimumWidth(30)
             row.addWidget(name)
             row.addWidget(bar, 1)
