@@ -29,7 +29,8 @@ class PlaywrightController:
         self.page = None
         self.mode = os.getenv("BROWSER_MODE", "auto").strip().lower()
         self.profile_dir = Path(os.getenv("BROWSER_USER_DATA_DIR", "")).expanduser() if os.getenv("BROWSER_USER_DATA_DIR") else None
-        self.cdp_url = os.getenv("BROWSER_CDP_URL", "http://127.0.0.1:9222").strip()
+        self.cdp_url = os.getenv("BROWSER_CDP_URL", "http://127.0.0.1:9222").strip().rstrip("/")
+        self.session_kind = "none"
 
     def available(self) -> bool:
         try:
@@ -49,26 +50,35 @@ class PlaywrightController:
         selected_mode = (mode or self.mode or "auto").strip().lower()
         self._playwright = sync_playwright().start()
         try:
+            # Automatic mode first attempts to attach to an already-running Chrome
+            # instance. If unavailable, it safely falls back to an isolated browser.
             if selected_mode in {"cdp", "auto", "existing"}:
                 try:
                     self.browser = self._playwright.chromium.connect_over_cdp(self.cdp_url)
                     self.context = self.browser.contexts[0] if self.browser.contexts else self.browser.new_context()
+                    self.session_kind = "existing-chrome"
                 except Exception as exc:
+                    self.browser = None
+                    self.context = None
                     if selected_mode in {"cdp", "existing"}:
                         raise BrowserAutomationError(
                             "Couldn't connect to your existing Chrome session. "
-                            "You can use isolated mode instead, or start Chrome with remote debugging enabled."
+                            "Start Chrome with remote debugging enabled, or switch Browser mode to Automatic."
                         ) from exc
 
-            if self.context is None and selected_mode == "profile" and self.profile_dir:
+            if self.context is None and selected_mode == "profile":
+                if not self.profile_dir:
+                    raise BrowserAutomationError("Browser profile mode needs a browser profile folder.")
                 self.profile_dir.mkdir(parents=True, exist_ok=True)
                 self.context = self._playwright.chromium.launch_persistent_context(
                     str(self.profile_dir), headless=headless
                 )
+                self.session_kind = "persistent-profile"
 
             if self.context is None:
                 self.browser = self._playwright.chromium.launch(headless=headless)
                 self.context = self.browser.new_context()
+                self.session_kind = "isolated"
 
             self.page = self.context.pages[0] if self.context.pages else self.context.new_page()
         except Exception:
@@ -80,6 +90,7 @@ class PlaywrightController:
         return {
             "connected": connected,
             "mode": self.mode,
+            "session": self.session_kind,
             "url": self.page.url if self.page else "",
             "title": self.page.title() if self.page else "",
             "cdp_url": self.cdp_url,
@@ -88,11 +99,12 @@ class PlaywrightController:
     def start_gmail(self) -> BrowserResult:
         if self.page is None:
             self.start(headless=False)
-        if not self.page.url or self.page.url == "about:blank":
+        if "mail.google.com" not in (self.page.url or ""):
             self.page.goto("https://mail.google.com/", wait_until="domcontentloaded", timeout=30_000)
-        elif "mail.google.com" not in self.page.url:
-            self.page.goto("https://mail.google.com/", wait_until="domcontentloaded", timeout=30_000)
-        return BrowserResult(f"Gmail is open in {self.page.title() or 'the browser'}.", "open_gmail")
+        return BrowserResult(
+            f"Gmail is open in {self.session_kind.replace('-', ' ')} mode.",
+            "open_gmail",
+        )
 
     def navigate(self, url: str) -> BrowserResult:
         self._require_page()
@@ -146,24 +158,28 @@ class PlaywrightController:
                         continue
             except Exception:
                 continue
-        return {"title": self.page.title(), "url": self.page.url, "elements": elements}
+        return {
+            "title": self.page.title(),
+            "url": self.page.url,
+            "elements": elements,
+            "session": self.session_kind,
+        }
 
     def close(self) -> None:
         self.stop()
 
     def stop(self) -> None:
         try:
-            if self.context and self.mode not in {"cdp", "existing", "auto"}:
+            if self.context and self.session_kind in {"persistent-profile", "isolated"}:
                 self.context.close()
         finally:
             self.context = None
-            if self.browser and self.mode not in {"cdp", "existing", "auto"}:
-                self.browser.close()
             self.browser = None
             if self._playwright:
                 self._playwright.stop()
             self._playwright = None
             self.page = None
+            self.session_kind = "none"
 
     @staticmethod
     def chrome_remote_debug_command() -> str:
