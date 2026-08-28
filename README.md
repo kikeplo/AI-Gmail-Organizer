@@ -2,30 +2,60 @@
 
 AI-powered Windows desktop overlay for intelligent Gmail organization and productivity automation.
 
-## v0.2 — AI command surface
+## v0.3 — Gmail connection
 
-The overlay is now interactive: users can enter natural-language commands and receive responses through a small command-agent layer. The app works in local demo mode without credentials and can optionally call an OpenAI Responses API model when `OPENAI_API_KEY` is configured.
+v0.3 adds the first real Gmail integration. The app can authenticate with Google using OAuth 2.0 and retrieve recent messages through the Gmail API. The current Gmail scope is **read-only**; destructive or externally visible Gmail actions are not implemented yet.
 
 ### Current capabilities
 
 - Borderless, always-on-top Windows overlay
 - Chat-style command interface
-- Local demo mode with Gmail-aware responses
+- Local demo mode
 - Optional OpenAI Responses API integration
-- Environment-based configuration
-- Basic automated tests for the command agent
+- Gmail OAuth 2.0 desktop authentication
+- Read-only Gmail message search
+- Natural-language shortcuts for unread, starred, and sender-based searches
+- Local OAuth token persistence
+- Automated tests for Gmail query routing
+
+### Google Cloud setup
+
+1. Create or select a Google Cloud project.
+2. Enable the **Gmail API**.
+3. Configure an OAuth client for a **Desktop app**.
+4. Download the OAuth client JSON and save it as `credentials.json` in the project root.
+5. Run the application and issue a Gmail command such as:
+
+```text
+Find my unread Gmail emails
+```
+
+Google will open a browser for authorization. After successful authorization, the app stores the local access/refresh token in `token.json`.
+
+**Never commit `credentials.json` or `token.json`.** They are explicitly ignored by `.gitignore`.
+
+### Example commands
+
+```text
+Find unread Gmail emails
+Show my starred emails
+Find emails from recruiter@example.com
+Show recent emails
+```
+
+The Gmail API's `messages.list` operation supports Gmail-style search queries such as `is:unread` and `from:...`. 
 
 ### Roadmap
 
-- **v0.3:** Gmail OAuth and inbox retrieval
-- **v0.4:** Email search and AI categorization
-- **v0.5:** Gmail labels, archive actions, and confirmation flow
+- **v0.4:** AI-powered email classification and inbox summaries
+- **v0.5:** Labels, archive actions, and explicit confirmation flow
 - **v0.6:** Windows automation tools
+- **v0.7:** Persistent local memory and analytics
 - **v1.0:** Polished desktop assistant with Gmail + Windows workflows
 
 ## Tech stack
 
-Python · PySide6 · OpenAI Responses API · Gmail API (planned) · SQLite (planned) · pytest
+Python · PySide6 · OpenAI Responses API · Gmail API · Google OAuth 2.0 · pytest
 
 ## Run locally
 
@@ -44,7 +74,7 @@ OPENAI_API_KEY=your_key_here
 OPENAI_MODEL=gpt-5.6-luna
 ```
 
-Without an API key, the application stays in safe demo mode and does not perform Gmail actions.
+Without an API key, the application still supports the Gmail command path once Google OAuth is configured.
 
 Run tests with:
 
@@ -52,4 +82,4 @@ Run tests with:
 pytest
 ```
 
-See `docs/architecture.md` for the current architecture and roadmap.
+See `docs/architecture.md` for the architecture and roadmap.
