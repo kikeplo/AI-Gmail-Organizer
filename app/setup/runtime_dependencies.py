@@ -1,10 +1,9 @@
-"""First-run dependency diagnostics and optional self-repair for packaged Windows builds."""
+"""First-run dependency diagnostics and setup helpers for Windows builds."""
 
 from __future__ import annotations
 
 import importlib.util
 import os
-import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -19,31 +18,25 @@ class DependencyStatus:
 
 
 def _module_available(module: str) -> bool:
-    return importlib.util.find_spec(module) is not None
+    try:
+        return importlib.util.find_spec(module) is not None
+    except (ImportError, ValueError):
+        return False
 
 
 def check_dependencies() -> list[DependencyStatus]:
-    statuses = [
+    return [
         DependencyStatus("PySide6", _module_available("PySide6"), True, "Desktop interface"),
         DependencyStatus("Google Gmail", _module_available("googleapiclient"), True, "Gmail integration"),
-        DependencyStatus("Windows automation", os.name == "nt" and _module_available("pyautogui"), True, "Mouse and keyboard control"),
+        DependencyStatus("Windows input", os.name == "nt" and _module_available("pyautogui"), True, "Mouse and keyboard control"),
         DependencyStatus("Windows UI Automation", os.name == "nt" and _module_available("pywinauto"), False, "Semantic desktop controls"),
         DependencyStatus("Browser automation", _module_available("playwright"), False, "Chrome and website automation"),
     ]
-    return statuses
-
-
-def missing_required(statuses: list[DependencyStatus] | None = None) -> list[DependencyStatus]:
-    statuses = statuses or check_dependencies()
-    return [item for item in statuses if item.required and not item.available]
 
 
 def browser_runtime_ready() -> bool:
     if not _module_available("playwright"):
         return False
-    chrome = shutil.which("chrome") or shutil.which("chromium")
-    if chrome:
-        return True
     try:
         from playwright.sync_api import sync_playwright
         with sync_playwright() as playwright:
@@ -53,8 +46,15 @@ def browser_runtime_ready() -> bool:
         return False
 
 
+def missing_required(statuses: list[DependencyStatus] | None = None) -> list[DependencyStatus]:
+    statuses = statuses or check_dependencies()
+    return [item for item in statuses if item.required and not item.available]
+
+
 def repair_optional_dependencies() -> list[str]:
-    """Install missing optional Python/browser components using the active Python runtime."""
+    """Repair optional components for source installs; packaged builds are expected to bundle them."""
+    if getattr(sys, "frozen", False):
+        return ["This EXE is designed to include optional components during packaging. Rebuild with the latest installer script if anything is missing."]
     actions: list[str] = []
     commands: list[list[str]] = []
     if os.name == "nt" and not _module_available("pywinauto"):
@@ -65,6 +65,8 @@ def repair_optional_dependencies() -> list[str]:
         subprocess.run(command, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         actions.append(" ".join(command[3:]))
     if _module_available("playwright") and not browser_runtime_ready():
-        subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        env = os.environ.copy()
+        env.setdefault("PLAYWRIGHT_BROWSERS_PATH", "0")
+        subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=False, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         actions.append("Playwright Chromium runtime")
     return actions
