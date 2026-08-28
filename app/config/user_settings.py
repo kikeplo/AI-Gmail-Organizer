@@ -46,6 +46,12 @@ def save_gmail_client_id(client_id: str) -> None:
     set_key(str(ENV_FILE), "GMAIL_CLIENT_ID", client_id.strip())
 
 
+def save_local_ai(enabled: bool, base_url: str, model: str) -> None:
+    set_key(str(ENV_FILE), "LOCAL_AI_ENABLED", "1" if enabled else "0")
+    set_key(str(ENV_FILE), "LOCAL_AI_BASE_URL", base_url.strip().rstrip("/"))
+    set_key(str(ENV_FILE), "LOCAL_AI_MODEL", model.strip())
+
+
 def install_google_credentials(source: str | Path) -> Path:
     source_path = Path(source)
     if not source_path.exists() or source_path.suffix.lower() != ".json":
