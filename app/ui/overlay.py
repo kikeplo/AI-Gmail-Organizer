@@ -1,4 +1,4 @@
-"""Desktop overlay for AI Gmail Organizer v1.8."""
+"""Desktop overlay for AI Gmail Organizer."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ from app.memory.store import MemoryStore
 from app.ui.dashboard import HistoryView, UsageView
 from app.ui.setup_dialog import SetupDialog
 from app.ui.worker import CommandWorker
+from app.version import APP_VERSION_TEXT
 
 
 class OverlayWindow(QMainWindow):
@@ -22,7 +23,7 @@ class OverlayWindow(QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("AI Gmail Organizer v1.8")
+        self.setWindowTitle(f"AI Gmail Organizer {APP_VERSION_TEXT}")
         self.setWindowFlag(Qt.FramelessWindowHint)
         self.setWindowFlag(Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
@@ -35,7 +36,7 @@ class OverlayWindow(QMainWindow):
         self._thread: QThread | None = None
         self._worker: CommandWorker | None = None
         self._build_ui()
-        self._add_message("assistant", "AI Gmail Organizer is ready. I can work with Gmail, Windows, visual desktop control, and local memory.")
+        self._add_message("assistant", f"AI Gmail Organizer {APP_VERSION_TEXT} is ready. I can work with Gmail, Windows, visual desktop control, and local memory.")
 
     def _build_ui(self) -> None:
         root = QWidget(); root.setObjectName("root"); self.setCentralWidget(root)
@@ -44,7 +45,7 @@ class OverlayWindow(QMainWindow):
         panel_layout = QVBoxLayout(panel); panel_layout.setContentsMargins(24, 20, 24, 20); panel_layout.setSpacing(14)
         header = QHBoxLayout(); title_block = QVBoxLayout(); title_block.setSpacing(2)
         title = QLabel("AI Gmail Organizer"); title.setObjectName("title")
-        subtitle = QLabel("v1.8 • Gmail + Windows + local AI context + vision"); subtitle.setObjectName("subtitle")
+        subtitle = QLabel(f"{APP_VERSION_TEXT} • Gmail + Windows + local AI context + vision"); subtitle.setObjectName("subtitle")
         title_block.addWidget(title); title_block.addWidget(subtitle)
         self.status = QLabel("● Ready"); self.status.setObjectName("status")
         settings = QPushButton("Settings"); settings.setObjectName("settingsButton"); settings.clicked.connect(self._open_settings)
