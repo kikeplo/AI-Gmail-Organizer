@@ -1,7 +1,7 @@
 [project]
 name = "ai-gmail-organizer"
-version = "0.5.0"
-description = "A Windows desktop AI assistant for organizing Gmail with confirmation-protected actions."
+version = "0.6.0"
+description = "A Windows desktop AI assistant for organizing Gmail and controlling desktop workflows."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -11,6 +11,7 @@ dependencies = [
     "google-api-python-client>=2.180,<3",
     "google-auth-httplib2>=0.2,<1",
     "google-auth-oauthlib>=1.2,<2",
+    "pywin32>=311; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]
