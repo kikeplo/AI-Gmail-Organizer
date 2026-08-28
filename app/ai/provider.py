@@ -1,17 +1,8 @@
-"""Provider-agnostic AI gateway.
-
-Supports common AI API protocols without tying the application to OpenAI:
-- OpenAI-compatible Chat Completions APIs
-- Google's Gemini OpenAI-compatibility endpoint
-- Anthropic's Messages API
-- Ollama's OpenAI-compatible endpoint
-
-The model is optional. When omitted, the gateway asks the provider for its
-available models and chooses the first suitable text-generation model.
-"""
+"""Provider-agnostic AI gateway with text and vision support."""
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 from urllib.error import HTTPError, URLError
@@ -39,15 +30,15 @@ class AIProvider:
             return "gemini"
         if "api.anthropic.com" in text or "anthropic" in text:
             return "anthropic"
+        if "ollama" in text:
+            return "openai_compatible"
         return "openai_compatible"
 
     def _base(self) -> str:
         base = self.base_url.rstrip("/")
         protocol = self._protocol()
-
         if base.endswith("/chat/completions"):
             base = base[: -len("/chat/completions")].rstrip("/")
-
         if protocol == "gemini":
             if not base:
                 base = "https://generativelanguage.googleapis.com/v1beta/openai"
@@ -57,15 +48,11 @@ class AIProvider:
                 else:
                     base += "/v1beta/openai"
             return base.rstrip("/")
-
         if protocol == "anthropic":
             return (base or "https://api.anthropic.com/v1").rstrip("/")
-
         if not base and "ollama" in self.provider.lower():
             return "http://localhost:11434/v1"
-        if not base:
-            return "https://api.openai.com/v1"
-        return base.rstrip("/")
+        return (base or "https://api.openai.com/v1").rstrip("/")
 
     def _headers(self, json_body: bool = False) -> dict[str, str]:
         headers = {"Accept": "application/json"}
@@ -78,7 +65,7 @@ class AIProvider:
             else:
                 headers["Authorization"] = f"Bearer {self.api_key}"
         if self._protocol() == "gemini":
-            headers["x-goog-api-client"] = "ai-gmail-organizer/1.0"
+            headers["x-goog-api-client"] = "ai-gmail-organizer/1.4"
         return headers
 
     def _request(self, method: str, url: str, body: dict | None = None) -> dict:
@@ -121,31 +108,50 @@ class AIProvider:
     def chat(self, user_text: str, system_text: str = "") -> str:
         model = self.resolve_model()
         protocol = self._protocol()
-
         if protocol == "anthropic":
-            body = {
-                "model": model,
-                "max_tokens": 2048,
-                "system": system_text or "You are a helpful desktop assistant.",
-                "messages": [{"role": "user", "content": user_text}],
-            }
+            body = {"model": model, "max_tokens": 2048, "system": system_text or "You are a helpful desktop assistant.", "messages": [{"role": "user", "content": user_text}]}
             data = self._request("POST", f"{self._base()}/messages", body)
             content = data.get("content", [])
-            texts = [item.get("text", "") for item in content if isinstance(item, dict) and item.get("type") == "text"]
-            return "".join(texts).strip()
-
-        body = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": system_text or "You are a helpful desktop assistant."},
-                {"role": "user", "content": user_text},
-            ],
-        }
+            return "".join(item.get("text", "") for item in content if isinstance(item, dict) and item.get("type") == "text").strip()
+        body = {"model": model, "messages": [{"role": "system", "content": system_text or "You are a helpful desktop assistant."}, {"role": "user", "content": user_text}]}
         data = self._request("POST", f"{self._base()}/chat/completions", body)
         try:
             content = data["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as exc:
             raise AIProviderError("The provider returned a response in an unsupported format.") from exc
+        if isinstance(content, list):
+            content = "".join(part.get("text", "") for part in content if isinstance(part, dict))
+        return str(content).strip()
+
+    def chat_with_image(self, user_text: str, image_base64: str, system_text: str = "") -> str:
+        """Send a screenshot to a vision-capable model using a common multimodal format."""
+        model = self.resolve_model()
+        if self._protocol() == "anthropic":
+            body = {
+                "model": model,
+                "max_tokens": 2048,
+                "system": system_text or "You are a careful visual desktop assistant.",
+                "messages": [{"role": "user", "content": [
+                    {"type": "text", "text": user_text},
+                    {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": image_base64}},
+                ]}],
+            }
+            data = self._request("POST", f"{self._base()}/messages", body)
+            content = data.get("content", [])
+            return "".join(item.get("text", "") for item in content if isinstance(item, dict) and item.get("type") == "text").strip()
+        image_url = f"data:image/png;base64,{image_base64}"
+        body = {
+            "model": model,
+            "messages": [{"role": "system", "content": system_text or "You are a careful visual desktop assistant."}, {"role": "user", "content": [
+                {"type": "text", "text": user_text},
+                {"type": "image_url", "image_url": {"url": image_url}},
+            ]}],
+        }
+        data = self._request("POST", f"{self._base()}/chat/completions", body)
+        try:
+            content = data["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise AIProviderError("The vision provider returned a response in an unsupported format.") from exc
         if isinstance(content, list):
             content = "".join(part.get("text", "") for part in content if isinstance(part, dict))
         return str(content).strip()
