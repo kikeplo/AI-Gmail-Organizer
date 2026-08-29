@@ -9,6 +9,7 @@ import re
 from dataclasses import dataclass
 from typing import Callable
 
+from app.agent.access import AccessManager
 from app.ai.provider import AIProvider, AIProviderError
 from app.windows.tools import WindowsTools
 
@@ -30,9 +31,10 @@ class VisionResult:
 class VisionAgent:
     """Use a vision-capable model to operate the local Windows desktop iteratively."""
 
-    def __init__(self, provider: AIProvider | None = None, tools: WindowsTools | None = None) -> None:
+    def __init__(self, provider: AIProvider | None = None, tools: WindowsTools | None = None, access: AccessManager | None = None) -> None:
         self.provider = provider or AIProvider()
         self.tools = tools or WindowsTools()
+        self.access = access or AccessManager()
         self.stop_requested = False
         self.pause_requested = False
 
@@ -52,6 +54,10 @@ class VisionAgent:
 
         if not self.provider.configured:
             raise AIProviderError("Configure an AI provider before using visual desktop control.")
+        if not self.access.is_allowed("screen"):
+            raise AIProviderError("Screen access is not enabled. Open Settings and allow Screen Access before asking me to look at your screen.")
+        if not self.access.is_allowed("input"):
+            raise AIProviderError("Mouse & keyboard access is not enabled. Open Settings and allow Mouse & Keyboard Control before asking me to control the desktop.")
 
         for step_number in range(1, max(1, max_steps) + 1):
             if self.stop_requested:
@@ -73,7 +79,7 @@ class VisionAgent:
             raw = self.provider.chat_with_image(prompt, encoded, system_text=self._system_prompt())
             decision = self._parse_decision(raw)
 
-            if decision["done"]:
+            if decision.get("done"):
                 return VisionResult(decision.get("message", "Task completed."), tuple(steps))
 
             action = decision.get("action")
@@ -139,39 +145,26 @@ class VisionAgent:
 
     def _execute_action(self, action: dict) -> str:
         action_name = str(action.get("type", "")).strip().lower()
+        if action_name in {"click", "double_click", "right_click", "move", "scroll", "type", "press", "hotkey"} and not self.access.is_allowed("input"):
+            raise AIProviderError("Mouse & keyboard access is no longer enabled. Open Settings and allow it before continuing.")
         if action_name in {"click", "double_click", "right_click", "move"}:
-            x = int(action["x"])
-            y = int(action["y"])
-            if action_name == "click":
-                self.tools.click(x, y)
-            elif action_name == "double_click":
-                self.tools.double_click(x, y)
-            elif action_name == "right_click":
-                self.tools.click(x, y, button="right")
-            else:
-                self.tools.move_mouse(x, y)
+            x = int(action["x"]); y = int(action["y"])
+            if action_name == "click": self.tools.click(x, y)
+            elif action_name == "double_click": self.tools.double_click(x, y)
+            elif action_name == "right_click": self.tools.click(x, y, button="right")
+            else: self.tools.move_mouse(x, y)
             return f"{action_name.replace('_', ' ').title()} at ({x}, {y})."
         if action_name == "scroll":
-            amount = int(action.get("amount", -5))
-            self.tools.scroll(amount)
-            return f"Scrolled {amount}."
+            amount = int(action.get("amount", -5)); self.tools.scroll(amount); return f"Scrolled {amount}."
         if action_name == "type":
-            text = str(action.get("text", ""))
-            self.tools.type_text(text)
-            return "Entered text."
+            self.tools.type_text(str(action.get("text", ""))); return "Entered text."
         if action_name == "press":
-            key = str(action.get("key", "enter"))
-            self.tools.press(key)
-            return f"Pressed {key}."
+            key = str(action.get("key", "enter")); self.tools.press(key); return f"Pressed {key}."
         if action_name == "hotkey":
             keys = action.get("keys", [])
-            if not isinstance(keys, list) or not keys:
-                raise AIProviderError("The vision model supplied an invalid hotkey.")
-            self.tools.hotkey(*[str(item) for item in keys])
-            return "Used a keyboard shortcut."
+            if not isinstance(keys, list) or not keys: raise AIProviderError("The vision model supplied an invalid hotkey.")
+            self.tools.hotkey(*[str(item) for item in keys]); return "Used a keyboard shortcut."
         if action_name == "wait":
             import time
-            seconds = min(max(float(action.get("seconds", 1)), 0.1), 5.0)
-            time.sleep(seconds)
-            return f"Waited {seconds:.1f} seconds."
+            seconds = min(max(float(action.get("seconds", 1)), 0.1), 5.0); time.sleep(seconds); return f"Waited {seconds:.1f} seconds."
         raise AIProviderError(f"Unsupported visual action: {action_name or 'unknown'}")
