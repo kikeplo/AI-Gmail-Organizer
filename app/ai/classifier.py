@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.ai.router import SmartAIRouter
-from app.ai.provider import AIProviderError
+from app.ai.provider import AIProvider, AIProviderError
 from app.gmail.client import GmailMessage
 
 CATEGORIES = ("important", "work", "personal", "promotions", "newsletters", "other")
@@ -78,12 +78,10 @@ class InboxClassifier:
         confidence = 0.45
         if any(word in text for word in ("unsubscribe", "newsletter", "weekly digest")):
             category, reason, confidence = "newsletters", "Contains newsletter-style language.", 0.9
-        elif any(word in text for word in ("sale", "discount", "offer", "% off", "deal")):
-            category, reason, confidence = "promotions", "Looks like a marketing or promotional email.", 0.85
-        elif any(word in text for word in ("invoice", "meeting", "project", "deadline", "recruiter", "interview", "work")):
-            category, reason, confidence = "work", "Contains work-related terms.", 0.78
-        elif any(word in text for word in ("urgent", "action required", "important", "verify", "security")):
-            category, reason, confidence = "important", "Contains urgency or action-required language.", 0.75
-        elif any(word in text for word in ("family", "birthday", "vacation", "friend")):
-            category, reason, confidence = "personal", "Contains personal-context terms.", 0.68
+        elif any(word in text for word in ("sale", "discount", "offer", "promo", "deal")):
+            category, reason, confidence = "promotions", "Contains promotional language.", 0.82
+        elif any(word in text for word in ("invoice", "payment", "receipt", "contract", "deadline", "meeting")):
+            category, reason, confidence = "work", "Contains work-related terms.", 0.75
+        elif any(word in text for word in ("family", "birthday", "vacation", "trip", "dinner")):
+            category, reason, confidence = "personal", "Contains personal-context terms.", 0.7
         return ClassifiedMessage(message, category, confidence, reason)
