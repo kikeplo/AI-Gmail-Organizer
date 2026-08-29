@@ -1,4 +1,4 @@
-"""Polished dashboard views for local history and usage."""
+"""Polished, readable dashboard views for local history and usage."""
 
 from __future__ import annotations
 
@@ -20,12 +20,12 @@ from app.memory.store import MemoryStore
 
 
 class StatCard(QFrame):
-    """Compact usage card with explicit contrast and content that never depends on global styles."""
+    """Readable usage card with explicit high-contrast text and flexible sizing."""
 
     def __init__(self, label: str, value: str, detail: str = "") -> None:
         super().__init__()
         self.setObjectName("statCard")
-        self.setMinimumHeight(116)
+        self.setMinimumHeight(124)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setStyleSheet(
             """
@@ -35,7 +35,7 @@ class StatCard(QFrame):
                 border-radius: 14px;
             }
             QLabel#cardEyebrow { color: #BFC9DA; font-size: 10px; font-weight: 800; }
-            QLabel#cardValue { color: #FFFFFF; font-size: 28px; font-weight: 800; }
+            QLabel#cardValue { color: #FFFFFF; font-size: 25px; font-weight: 800; }
             QLabel#cardDetail { color: #D6DCE7; font-size: 11px; }
             """
         )
@@ -47,10 +47,12 @@ class StatCard(QFrame):
         eyebrow.setObjectName("cardEyebrow")
         value_label = QLabel(value)
         value_label.setObjectName("cardValue")
-        detail_label = QLabel(detail or "—")
+        value_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        value_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        detail_label = QLabel(detail or "No data yet")
         detail_label.setObjectName("cardDetail")
         detail_label.setWordWrap(True)
-        detail_label.setMinimumHeight(28)
+        detail_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
 
         layout.addWidget(eyebrow)
         layout.addWidget(value_label)
@@ -75,9 +77,9 @@ class HistoryView(QWidget):
         self.list = QListWidget()
         self.list.setObjectName("historyList")
         self.list.setWordWrap(True)
-        self.list.setUniformItemSizes(False)
-        self.list.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.list.setTextElideMode(Qt.ElideNone)
         self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.list.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.list.setStyleSheet(
             """
             QListWidget#historyList {
@@ -116,7 +118,7 @@ class HistoryView(QWidget):
 
     def refresh(self) -> None:
         self.list.clear()
-        items = self.store.recent(50)
+        items = self.store.recent(100)
         if not items:
             empty = QListWidgetItem("No activity yet. Start with a command from the Assistant tab.")
             empty.setTextAlignment(Qt.AlignCenter)
@@ -173,7 +175,7 @@ class UsageView(QWidget):
     def refresh(self) -> None:
         content = QWidget()
         layout = QVBoxLayout(content)
-        layout.setContentsMargins(2, 2, 10, 12)
+        layout.setContentsMargins(2, 2, 12, 16)
         layout.setSpacing(9)
         content.setStyleSheet(
             """
@@ -181,8 +183,8 @@ class UsageView(QWidget):
             QLabel#usageSubtitle { color: #CBD5E1; font-size: 12px; }
             QLabel#usageSection { color: #FFFFFF; font-size: 13px; font-weight: 800; margin-top: 8px; }
             QLabel#usageModeName { color: #FFFFFF; font-size: 12px; font-weight: 700; }
-            QLabel#usageModeValue { color: #E2E8F0; font-size: 12px; font-weight: 800; }
-            QLabel#usageEmpty { color: #B7C1D1; padding: 12px 2px; }
+            QLabel#usageModeValue { color: #FFFFFF; font-size: 12px; font-weight: 800; }
+            QLabel#usageEmpty { color: #D2D8E3; padding: 12px 2px; }
             QFrame#modeRow { background: #1A2231; border: 1px solid #303A4E; border-radius: 10px; }
             QProgressBar { background: #30394B; border: none; border-radius: 4px; height: 8px; }
             QProgressBar::chunk { background: #6D86F7; border-radius: 4px; }
@@ -210,12 +212,21 @@ class UsageView(QWidget):
 
         cards = QHBoxLayout()
         cards.setSpacing(10)
-        interaction_detail = "No interactions recorded yet" if total == 0 else "Saved locally on this device"
-        ai_detail = "No AI requests recorded yet" if ai_count == 0 else "Requests routed through your AI providers"
-        gmail_detail = "No completed Gmail changes" if gmail_count == 0 else "Successfully completed Gmail changes"
-        cards.addWidget(StatCard("Interactions", str(total), interaction_detail), 1)
-        cards.addWidget(StatCard("AI responses", str(ai_count), ai_detail), 1)
-        cards.addWidget(StatCard("Gmail actions", str(gmail_count), gmail_detail), 1)
+        cards.addWidget(StatCard(
+            "Interactions",
+            f"{total:,}",
+            "No activity recorded yet" if total == 0 else "Commands saved locally on this device",
+        ), 1)
+        cards.addWidget(StatCard(
+            "AI responses",
+            f"{ai_count:,}",
+            "No AI requests recorded yet" if ai_count == 0 else "Requests sent through your configured AI providers",
+        ), 1)
+        cards.addWidget(StatCard(
+            "Gmail actions",
+            f"{gmail_count:,}",
+            "No completed Gmail changes" if gmail_count == 0 else "Completed Gmail changes recorded",
+        ), 1)
         layout.addLayout(cards)
 
         section = QLabel("Activity by mode")
@@ -223,39 +234,43 @@ class UsageView(QWidget):
         layout.addWidget(section)
 
         if not counts:
-            empty = QLabel("No activity recorded yet. Your usage statistics will appear here as you use the assistant.")
+            empty = QLabel(
+                "No activity recorded yet. Your usage statistics will appear here as you use the assistant."
+            )
             empty.setObjectName("usageEmpty")
             empty.setWordWrap(True)
             layout.addWidget(empty)
         else:
-            total_for_percent = max(total, sum(counts.values()), 1)
+            total_for_percent = max(sum(counts.values()), 1)
             max_count = max(counts.values())
             for mode, count in sorted(counts.items(), key=lambda pair: (-pair[1], pair[0])):
                 percent = (count / total_for_percent) * 100
                 row_frame = QFrame()
                 row_frame.setObjectName("modeRow")
-                row_frame.setMinimumHeight(48)
+                row_frame.setMinimumHeight(52)
                 row = QHBoxLayout(row_frame)
                 row.setContentsMargins(12, 8, 12, 8)
                 row.setSpacing(10)
 
                 name = QLabel(self._mode_label(mode))
                 name.setObjectName("usageModeName")
-                name.setMinimumWidth(145)
-                name.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
+                name.setMinimumWidth(132)
+                name.setWordWrap(True)
+                name.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
 
                 bar = QProgressBar()
                 bar.setRange(0, max_count)
                 bar.setValue(count)
                 bar.setTextVisible(False)
-                bar.setMinimumWidth(120)
+                bar.setMinimumWidth(70)
                 bar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
-                value = QLabel(f"{count}  ·  {percent:.0f}%")
+                value = QLabel(f"{count:,}  ·  {percent:.0f}%")
                 value.setObjectName("usageModeValue")
                 value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                value.setMinimumWidth(80)
+                value.setMinimumWidth(96)
                 value.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
+                value.setTextInteractionFlags(Qt.TextSelectableByMouse)
 
                 row.addWidget(name)
                 row.addWidget(bar, 1)
