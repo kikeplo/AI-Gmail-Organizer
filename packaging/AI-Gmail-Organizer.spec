@@ -1,15 +1,9 @@
 # PyInstaller configuration for a portable Windows application folder.
-# The EXE is the launcher; browser and automation runtimes live beside it.
-
 from pathlib import Path
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 project_root = Path(SPECPATH).resolve().parent
-
-hiddenimports = [
-    'win32api', 'win32con', 'win32gui', 'win32process',
-    'comtypes', 'comtypes.client',
-]
+hiddenimports = ['win32api', 'win32con', 'win32gui', 'win32process', 'comtypes', 'comtypes.client']
 for package in ('pyautogui', 'pyscreeze', 'pytweening', 'pymsgbox', 'mouseinfo', 'PIL', 'pywinauto', 'playwright'):
     try:
         hiddenimports += collect_submodules(package)
@@ -22,50 +16,15 @@ for package in ('pyautogui', 'pyscreeze', 'PIL', 'pywinauto', 'playwright'):
         datas += collect_data_files(package)
     except Exception:
         pass
-
-# The build script places Chromium under .playwright. In onedir mode it is
-# copied into the sibling playwright folder beside the EXE.
 playwright_local = project_root / '.playwright'
 if playwright_local.exists():
     datas.append((str(playwright_local), 'playwright'))
-
+icon = project_root / 'assets' / 'ai_gmail_organizer.svg'
+if icon.exists():
+    datas.append((str(icon), 'assets'))
 runtime_hook = project_root / 'packaging' / 'runtime_hooks' / 'playwright_portable.py'
 
-
-a = Analysis(
-    [str(project_root / 'main.py')],
-    pathex=[str(project_root)],
-    binaries=[],
-    datas=datas,
-    hiddenimports=hiddenimports,
-    hookspath=[],
-    hooksconfig={},
-    runtime_hooks=[str(runtime_hook)],
-    excludes=[],
-    noarchive=False,
-)
-
+a = Analysis([str(project_root / 'main.py')], pathex=[str(project_root)], binaries=[], datas=datas, hiddenimports=hiddenimports, hookspath=[], hooksconfig={}, runtime_hooks=[str(runtime_hook)], excludes=[], noarchive=False)
 pyz = PYZ(a.pure)
-
-exe = EXE(
-    pyz,
-    a.scripts,
-    a.binaries,
-    a.datas,
-    [],
-    name='AI-Gmail-Organizer',
-    debug=False,
-    bootloader_ignore_signals=False,
-    strip=False,
-    upx=True,
-    console=False,
-)
-
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.datas,
-    strip=False,
-    upx=True,
-    name='AI-Gmail-Organizer',
-)
+exe = EXE(pyz, a.scripts, a.binaries, a.datas, [], name='AI-Gmail-Organizer', debug=False, bootloader_ignore_signals=False, strip=False, upx=True, console=False)
+coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=True, name='AI-Gmail-Organizer')
