@@ -6,7 +6,8 @@ import sys
 
 from dotenv import load_dotenv
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtGui import QIcon
+from PySide6.QtWidgets import QApplication
 
 from app.ui.overlay import OverlayWindow
 from app.ui.setup_dialog import SetupDialog
@@ -27,36 +28,27 @@ def load_user_config() -> Path:
     return config_dir
 
 
+def resource_path(relative: str) -> Path:
+    """Resolve a bundled resource in both source and PyInstaller builds."""
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+    return base / relative
+
+
 def configure_desktop_window(window: OverlayWindow) -> None:
-    """Turn the legacy overlay into a normal, user-friendly desktop window.
-
-    The existing visual design is retained, but the application gets a real
-    Windows top-level window. This prevents permission/confirmation dialogs
-    from being trapped behind an always-on-top overlay and gives the user
-    normal minimize/maximize/focus behavior.
-    """
-    # Remove the overlay-specific flags inherited from OverlayWindow.
-    window.setWindowFlag(Qt.FramelessWindowHint, False)
+    """Keep the original rounded custom UI while behaving as a normal desktop window."""
+    # Keep the custom frameless/rounded appearance, but remove always-on-top
+    # behavior so dialogs and other applications can receive focus normally.
+    window.setWindowFlags(Qt.Window | Qt.FramelessWindowHint)
     window.setWindowFlag(Qt.WindowStaysOnTopHint, False)
-    window.setAttribute(Qt.WA_TranslucentBackground, False)
-
-    # Use standard desktop window controls while keeping the existing UI.
-    window.setWindowFlags(
-        Qt.Window
-        | Qt.WindowTitleHint
-        | Qt.WindowSystemMenuHint
-        | Qt.WindowMinimizeButtonHint
-        | Qt.WindowMaximizeButtonHint
-        | Qt.WindowCloseButtonHint
-    )
-    window.setMinimumSize(620, 420)
-    window.resize(760, 540)
-    window.setWindowTitle(window.windowTitle())
-
-    # Make it a genuine top-level application window and ensure it is visible
-    # when first launched. Child dialogs (OAuth, confirmations, permissions)
-    # can now use this window as their parent without being hidden behind it.
+    window.setAttribute(Qt.WA_TranslucentBackground, True)
+    window.setMinimumSize(780, 540)
+    window.resize(960, 680)
     window.setAttribute(Qt.WA_DeleteOnClose, True)
+
+    icon_path = resource_path("assets/ai_gmail_organizer.svg")
+    if icon_path.exists():
+        window.setWindowIcon(QIcon(str(icon_path)))
+
     window.show()
     window.raise_()
     window.activateWindow()
@@ -70,17 +62,16 @@ def main() -> int:
     app.setOrganizationName("AI Gmail Organizer")
     app.setQuitOnLastWindowClosed(True)
 
+    icon_path = resource_path("assets/ai_gmail_organizer.svg")
+    if icon_path.exists():
+        app.setWindowIcon(QIcon(str(icon_path)))
+
     config_file = config_dir / ".env"
     credentials_file = config_dir / "credentials.json"
     if not config_file.exists() and not credentials_file.exists():
         setup = SetupDialog()
         setup.setWindowModality(Qt.ApplicationModal)
-        setup.setWindowFlags(
-            Qt.Dialog
-            | Qt.WindowTitleHint
-            | Qt.WindowSystemMenuHint
-            | Qt.WindowCloseButtonHint
-        )
+        setup.setWindowFlags(Qt.Dialog | Qt.WindowTitleHint | Qt.WindowSystemMenuHint | Qt.WindowCloseButtonHint)
         setup.show()
         setup.raise_()
         setup.activateWindow()
@@ -89,7 +80,6 @@ def main() -> int:
 
     window = OverlayWindow()
     configure_desktop_window(window)
-
     return app.exec()
 
 
