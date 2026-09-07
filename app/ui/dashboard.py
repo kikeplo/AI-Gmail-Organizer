@@ -30,7 +30,11 @@ class StatCard(QFrame):
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setStyleSheet(
             """
-            QFrame#statCard { background: #1D2535; border: 1px solid #354057; border-radius: 14px; }
+            QFrame#statCard {
+                background: #1D2535;
+                border: 1px solid #354057;
+                border-radius: 14px;
+            }
             QLabel#cardEyebrow { color: #BFC9DA; font-size: 10px; font-weight: 800; }
             QLabel#cardValue { color: #FFFFFF; font-size: 25px; font-weight: 800; }
             QLabel#cardDetail { color: #D6DCE7; font-size: 11px; }
@@ -52,28 +56,54 @@ class HistoryView(QWidget):
     def __init__(self, store: MemoryStore) -> None:
         super().__init__()
         self.store = store
-        layout = QVBoxLayout(self); layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(8)
+        self.setObjectName("historyView")
+        self.setStyleSheet(
+            """
+            QWidget#historyView { background: #121620; }
+            QLabel#historyTitle { color: #FFFFFF; font-size: 21px; font-weight: 800; }
+            QLabel#historySubtitle { color: #B9C3D3; font-size: 12px; }
+            QListWidget#historyList {
+                background: #121620;
+                border: none;
+                color: #F8FAFC;
+                outline: none;
+                padding: 2px 0;
+            }
+            QListWidget#historyList::item {
+                color: #F8FAFC;
+                background: #1A2231;
+                border: 1px solid #303A4E;
+                border-radius: 10px;
+                padding: 11px 13px;
+                margin: 4px 1px;
+            }
+            QListWidget#historyList::item:selected {
+                color: #FFFFFF;
+                background: #263552;
+            }
+            QListWidget#historyList::item:hover {
+                color: #FFFFFF;
+                background: #202B3E;
+            }
+            QScrollBar:vertical { width: 8px; background: #121620; }
+            QScrollBar::handle:vertical { background: #59657D; border-radius: 4px; min-height: 28px; }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+            """
+        )
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
         title = QLabel("History"); title.setObjectName("historyTitle")
         subtitle = QLabel("Your recent local assistant activity"); subtitle.setObjectName("historySubtitle")
         layout.addWidget(title); layout.addWidget(subtitle)
         self.list = QListWidget(); self.list.setObjectName("historyList")
         self.list.setWordWrap(True); self.list.setTextElideMode(Qt.ElideNone)
         self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff); self.list.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.list.setStyleSheet(
-            """
-            QListWidget#historyList { background: transparent; border: none; color: #F8FAFC; outline: none; }
-            QListWidget#historyList::item { color: #F8FAFC; background: #1A2231; border: 1px solid #303A4E; border-radius: 10px; padding: 11px 13px; margin: 4px 1px; }
-            QListWidget#historyList::item:selected { color: #FFFFFF; background: #263552; }
-            QListWidget#historyList::item:hover { color: #FFFFFF; background: #202B3E; }
-            QScrollBar:vertical { width: 8px; background: transparent; }
-            QScrollBar::handle:vertical { background: rgba(255,255,255,70); border-radius: 4px; min-height: 28px; }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
-            """
-        )
         palette = self.list.palette()
         palette.setColor(QPalette.Text, Qt.white)
         palette.setColor(QPalette.HighlightedText, Qt.white)
         palette.setColor(QPalette.Base, Qt.transparent)
+        palette.setColor(QPalette.AlternateBase, Qt.transparent)
         self.list.setPalette(palette)
         layout.addWidget(self.list, 1)
         self.refresh()
@@ -92,14 +122,18 @@ class HistoryView(QWidget):
 
 class UsageView(QWidget):
     def __init__(self, store: MemoryStore) -> None:
-        super().__init__(); self.store = store
+        super().__init__()
+        self.setObjectName("usageView")
+        self.setStyleSheet("QWidget#usageView { background: #121620; }")
+        self.store = store
         self.outer_layout = QVBoxLayout(self); self.outer_layout.setContentsMargins(0, 0, 0, 0)
         self.scroll = QScrollArea(); self.scroll.setWidgetResizable(True); self.scroll.setFrameShape(QFrame.NoFrame)
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff); self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.scroll.setStyleSheet("""
-            QScrollArea { background: transparent; border: none; }
-            QScrollBar:vertical { width: 8px; background: transparent; }
-            QScrollBar::handle:vertical { background: rgba(255,255,255,70); border-radius: 4px; min-height: 28px; }
+            QScrollArea { background: #121620; border: none; }
+            QScrollArea > QWidget > QWidget { background: #121620; }
+            QScrollBar:vertical { width: 8px; background: #121620; }
+            QScrollBar::handle:vertical { background: #59657D; border-radius: 4px; min-height: 28px; }
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
         """)
         self.outer_layout.addWidget(self.scroll); self.refresh()
@@ -110,14 +144,17 @@ class UsageView(QWidget):
         return mapping.get(mode, mode.replace("_", " ").title())
 
     def refresh(self) -> None:
-        content = QWidget(); layout = QVBoxLayout(content); layout.setContentsMargins(2, 2, 12, 16); layout.setSpacing(9)
+        content = QWidget(); content.setObjectName("usageContent")
+        content.setStyleSheet("QWidget#usageContent { background: #121620; }")
+        layout = QVBoxLayout(content); layout.setContentsMargins(2, 2, 12, 16); layout.setSpacing(9)
         content.setStyleSheet("""
+            QWidget#usageContent { background: #121620; }
             QLabel#usageTitle { color: #FFFFFF; font-size: 21px; font-weight: 800; }
-            QLabel#usageSubtitle { color: #CBD5E1; font-size: 12px; }
+            QLabel#usageSubtitle { color: #B9C3D3; font-size: 12px; }
             QLabel#usageSection { color: #FFFFFF; font-size: 13px; font-weight: 800; margin-top: 8px; }
-            QLabel#usageModeName { color: #FFFFFF; font-size: 12px; font-weight: 700; }
+            QLabel#usageModeName { color: #F8FAFC; font-size: 12px; font-weight: 700; }
             QLabel#usageModeValue { color: #FFFFFF; font-size: 12px; font-weight: 800; }
-            QLabel#usageEmpty { color: #D2D8E3; padding: 12px 2px; }
+            QLabel#usageEmpty { color: #C7D0DE; padding: 12px 2px; }
             QFrame#modeRow { background: #1A2231; border: 1px solid #303A4E; border-radius: 10px; }
             QProgressBar { background: #30394B; border: none; border-radius: 4px; height: 8px; }
             QProgressBar::chunk { background: #6D86F7; border-radius: 4px; }
