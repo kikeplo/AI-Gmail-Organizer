@@ -10,9 +10,11 @@ from PySide6.QtWidgets import (
     QPushButton, QScrollArea, QSizePolicy, QTabWidget, QVBoxLayout, QWidget,
 )
 
+from app.agent.access import AccessManager
 from app.agent.commands import CommandAgent
 from app.memory.store import MemoryStore
 from app.ui.dashboard import HistoryView, UsageView
+from app.ui.desktop_access import DesktopAccessDialog
 from app.ui.setup_dialog import SetupDialog
 from app.ui.worker import CommandWorker
 from app.version import APP_VERSION_TEXT
@@ -150,9 +152,30 @@ class OverlayWindow(QMainWindow):
 
     def _submit(self, command: str) -> None: self.tabs.setCurrentIndex(0); self.command_input.setText(command); self._on_send()
 
+    def _needs_visual_access(self, command: str) -> bool:
+        lowered = command.casefold()
+        return self._agent._looks_like_gmail_ui_task(lowered) or self._agent._looks_like_visual_task(lowered)
+
+    def _request_visual_access(self) -> bool:
+        access = AccessManager()
+        if access.is_allowed("screen") and access.is_allowed("input"):
+            return True
+        dialog = DesktopAccessDialog(access, parent=self)
+        dialog.setWindowModality(Qt.ApplicationModal)
+        dialog.setModal(True)
+        dialog.raise_()
+        dialog.activateWindow()
+        if dialog.exec() == QDialog.Accepted and access.is_allowed("screen") and access.is_allowed("input"):
+            self._add_message("assistant", "Screen and mouse/keyboard access enabled. Starting the visual task…")
+            return True
+        self._add_message("assistant", "Visual task cancelled because screen and mouse/keyboard access was not enabled.")
+        return False
+
     def _on_send(self) -> None:
         command = self.command_input.text().strip()
         if not command or self._thread is not None: return
+        if self._needs_visual_access(command) and not self._request_visual_access():
+            return
         self._add_message("user", command); self.command_input.clear(); self.send_button.setEnabled(False); self.send_button.setText("Working…"); self.status.setText("● Working"); self.hint.setText("Working in the background. You can pause or stop a visual task at any time."); self.pause_button.setEnabled(True); self.stop_button.setEnabled(True)
         self._thread = QThread(self); self._worker = CommandWorker(self._agent, command); self._worker.moveToThread(self._thread); self._thread.started.connect(self._worker.run); self._worker.status.connect(self._on_worker_status); self._worker.finished.connect(self._on_worker_finished); self._worker.failed.connect(self._on_worker_failed); self._worker.finished.connect(self._thread.quit); self._worker.failed.connect(self._thread.quit); self._thread.finished.connect(self._cleanup_worker); self._thread.start()
 
