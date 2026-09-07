@@ -215,7 +215,7 @@ class CommandAgent:
             if len(comma_parts) > 1:
                 expanded.extend(comma_parts)
                 continue
-            and_parts = re.split(r"\s+and\s+(?=(?:open|go|navigate|click|double[- ]click|right[- ]click|select|type|press|scroll|launch|start)\b)", part, flags=re.IGNORECASE)
+            and_parts = re.split(r"\s+and\s+(?=(?:open|go|navigate|click|double[- ]click|right[- ]click|select|type|press|scroll|launch|start|search)\b)", part, flags=re.IGNORECASE)
             expanded.extend([p.strip(" .,-") for p in and_parts if p.strip(" .,-")])
         return [re.sub(r"^\s*(?:\d+\.|[-•])\s*", "", part).strip() for part in expanded[:12]]
 
