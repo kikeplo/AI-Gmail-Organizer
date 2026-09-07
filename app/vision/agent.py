@@ -126,7 +126,7 @@ class VisionAgent:
     @staticmethod
     def _action_fingerprint(action: str, decision: dict) -> str:
         if action in {"click", "double_click", "right_click"}:
-            target = VisionAgent._target_point(decision)
+            target = VisionAgent._raw_target_point(decision)
             if target is not None:
                 x, y = target
                 return f"{action}:{x // 12}:{y // 12}"
@@ -147,37 +147,29 @@ class VisionAgent:
             record["amount"] = int(decision.get("amount", -5))
         return record
 
-    @classmethod
-    def _screen_ratio(cls) -> tuple[float, float]:
-        try:
-            import pyautogui
-            screen_w, screen_h = pyautogui.size()
-        except Exception:
-            return 1.0, 1.0
-        if cls._active_instance_screenshot_size := getattr(cls, "_active_screenshot_size", None):
-            shot_w, shot_h = cls._active_instance_screenshot_size
-            if screen_w > 0 and screen_h > 0 and shot_w > 0 and shot_h > 0:
-                return screen_w / shot_w, screen_h / shot_h
-        return 1.0, 1.0
-
-    def _target_point(self, decision: dict) -> tuple[int, int] | None:
+    @staticmethod
+    def _raw_target_point(decision: dict) -> tuple[float, float] | None:
         bbox = decision.get("bbox")
         if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
             try:
                 x1, y1, x2, y2 = [float(value) for value in bbox]
-                cx = (x1 + x2) / 2.0
-                cy = (y1 + y2) / 2.0
-                ratio_x, ratio_y = self._get_coordinate_ratio()
-                return round(cx * ratio_x), round(cy * ratio_y)
+                return (x1 + x2) / 2.0, (y1 + y2) / 2.0
             except (TypeError, ValueError):
                 pass
         if "x" in decision and "y" in decision:
             try:
-                ratio_x, ratio_y = self._get_coordinate_ratio()
-                return round(float(decision["x"]) * ratio_x), round(float(decision["y"]) * ratio_y)
+                return float(decision["x"]), float(decision["y"])
             except (TypeError, ValueError):
                 return None
         return None
+
+    def _target_point(self, decision: dict) -> tuple[int, int] | None:
+        target = self._raw_target_point(decision)
+        if target is None:
+            return None
+        x, y = target
+        ratio_x, ratio_y = self._get_coordinate_ratio()
+        return round(x * ratio_x), round(y * ratio_y)
 
     def _get_coordinate_ratio(self) -> tuple[float, float]:
         if not self._screenshot_size:
