@@ -9,8 +9,6 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
-from app.agent.access import AccessManager
-from app.ui.desktop_access import DesktopAccessDialog
 from app.ui.overlay import OverlayWindow
 from app.ui.setup_dialog import SetupDialog
 
@@ -78,19 +76,9 @@ def main() -> int:
         setup.exec()
         load_dotenv(config_file, override=True)
 
-    # Permission consent is completed synchronously on Qt's main thread.
-    # The worker thread is not created until after the user has responded.
-    access = AccessManager()
-    if not access.is_allowed("screen") or not access.is_allowed("input") or not access.is_allowed("browser"):
-        dialog = DesktopAccessDialog(access, parent=None)
-        dialog.setWindowModality(Qt.ApplicationModal)
-        dialog.show()
-        dialog.raise_()
-        dialog.activateWindow()
-        if dialog.exec() != dialog.Accepted:
-            # The app remains usable for Gmail/local AI; desktop capabilities stay disabled.
-            pass
-
+    # Desktop consent is requested only when the user actually starts a visual
+    # task. This avoids showing a permission dialog on every launch and keeps
+    # normal Gmail/AI usage independent from desktop-control permissions.
     window = OverlayWindow()
     configure_desktop_window(window)
     return app.exec()
