@@ -2,7 +2,11 @@
 from pathlib import Path
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
+# This spec lives in <project>/packaging, so the project root is one level up.
 project_root = Path(SPECPATH).resolve().parent
+if project_root.name.casefold() == 'packaging':
+    project_root = project_root.parent
+
 hiddenimports = ['win32api', 'win32con', 'win32gui', 'win32process', 'comtypes', 'comtypes.client']
 for package in ('pyautogui', 'pyscreeze', 'pytweening', 'pymsgbox', 'mouseinfo', 'PIL', 'pywinauto', 'playwright'):
     try:
