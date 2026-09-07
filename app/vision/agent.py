@@ -97,6 +97,17 @@ class VisionAgent:
                 )
             recent_actions.append(action_key)
 
+            if action in {"click", "double_click", "right_click"}:
+                verified = self._verify_click_target(goal, image, decision)
+                if verified is None:
+                    return VisionResult(
+                        "I could not confidently locate the requested target, so I did not click.",
+                        stopped=True,
+                        steps=list(self.last_steps),
+                    )
+                decision = verified
+                message = str(decision.get("message", message))
+
             self.last_steps.append(self._safe_step_record(action, decision, message))
             if progress:
                 progress(f"Step {step}: {message or action}")
@@ -114,7 +125,11 @@ class VisionAgent:
             self._execute_action(action, decision)
 
             if explicit_single_click and action in {"click", "double_click", "right_click"}:
-                return VisionResult(message or f"Completed: {goal.strip()}", steps=list(self.last_steps))
+                verification = self._verify_post_click(goal)
+                record = self.last_steps[-1]
+                record["post_click_verified"] = verification
+                suffix = " The resulting screen state was verified." if verification else " The click was executed, but the resulting screen state could not be verified."
+                return VisionResult((message or f"Completed: {goal.strip()}") + suffix, steps=list(self.last_steps))
             time.sleep(0.35)
 
         return VisionResult(
@@ -185,14 +200,8 @@ class VisionAgent:
         return 1.0, 1.0
 
     def _decide(self, goal: str, image) -> dict:
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as handle:
-            temp_path = Path(handle.name)
-        try:
-            image.save(temp_path)
-            encoded = base64.b64encode(temp_path.read_bytes()).decode("ascii")
-        finally:
-            temp_path.unlink(missing_ok=True)
-        prompt = (
+        return self._vision_json(
+            image,
             "You control a Windows desktop using screenshots. Return ONLY valid JSON with one action.\n"
             "Goal: " + goal + "\n"
             "Available actions: click, double_click, right_click, type, press, hotkey, scroll, wait, done.\n"
@@ -204,6 +213,76 @@ class VisionAgent:
             "Prefer the smallest next step. Never choose or attempt to bypass confirmation for send, submit, delete, purchase, upload, download, "
             "or other consequential actions. For done, include a concise message."
         )
+
+    def _verify_click_target(self, goal: str, image, decision: dict) -> dict | None:
+        """Use a second vision pass to validate/refine a proposed click before executing it."""
+        candidate = self._raw_target_point(decision)
+        if candidate is None:
+            return None
+
+        annotated = image.copy()
+        try:
+            from PIL import ImageDraw
+            draw = ImageDraw.Draw(annotated)
+            x, y = round(candidate[0]), round(candidate[1])
+            radius = 14
+            draw.ellipse((x - radius, y - radius, x + radius, y + radius), outline=(255, 40, 40), width=3)
+            draw.line((x - 24, y, x + 24, y), fill=(255, 40, 40), width=2)
+            draw.line((x, y - 24, x, y + 24), fill=(255, 40, 40), width=2)
+        except Exception:
+            pass
+
+        prompt = (
+            "Verify a proposed desktop click target. Return ONLY valid JSON.\n"
+            "Goal: " + goal + "\n"
+            f"The proposed click point is ({round(candidate[0])}, {round(candidate[1])}) in screenshot pixels. "
+            "It is marked by a red crosshair.\n"
+            "Determine whether that point is actually inside the clickable portion of the requested target. "
+            "Do not use browser/CSS coordinates.\n"
+            'Return exactly: {"approved": true/false, "x": number, "y": number, "message": "..."}.\n'
+            "If the point is slightly wrong but the target is visible, return approved=true and the corrected screenshot-pixel x/y. "
+            "The corrected point should be safely inside the clickable target, not on empty padding, an adjacent row, or another control. "
+            "Prefer the visual center of the actual clickable text/icon row."
+        )
+        result = self._vision_json(annotated, prompt)
+        if not bool(result.get("approved", False)):
+            return None
+        try:
+            x = float(result["x"])
+            y = float(result["y"])
+        except (KeyError, TypeError, ValueError):
+            return None
+        corrected = dict(decision)
+        corrected.pop("bbox", None)
+        corrected["x"] = x
+        corrected["y"] = y
+        corrected["message"] = str(result.get("message", decision.get("message", "")))
+        return corrected
+
+    def _verify_post_click(self, goal: str) -> bool:
+        """Check the new screen once after an explicit click; never auto-click again here."""
+        try:
+            image = self.tools.screenshot()
+            prompt = (
+                "Verify whether a desktop action succeeded. Return ONLY valid JSON.\n"
+                "Requested goal: " + goal + "\n"
+                'Return exactly: {"success": true/false, "message": "..."}.\n'
+                "Look at the current screen and decide whether the requested click action appears to have produced the intended result. "
+                "Do not require a specific animation or transient visual detail if the resulting UI state is clearly present."
+            )
+            result = self._vision_json(image, prompt)
+            return bool(result.get("success", False))
+        except Exception:
+            return False
+
+    def _vision_json(self, image, prompt: str) -> dict:
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as handle:
+            temp_path = Path(handle.name)
+        try:
+            image.save(temp_path)
+            encoded = base64.b64encode(temp_path.read_bytes()).decode("ascii")
+        finally:
+            temp_path.unlink(missing_ok=True)
         return self.router.vision_json(prompt, encoded)
 
     def _execute_action(self, action: str, decision: dict) -> None:
