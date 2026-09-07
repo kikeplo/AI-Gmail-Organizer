@@ -30,7 +30,7 @@ class VisionResult:
 
 
 class VisionAgent:
-    """Observe the screen, choose an allowed action, execute it, and stop safely."""
+    """Observe the screen, choose an allowed action, and stop safely."""
 
     def __init__(self, router: SmartAIRouter | None = None, tools: WindowsTools | None = None) -> None:
         self.router = router or SmartAIRouter()
@@ -42,6 +42,7 @@ class VisionAgent:
         self._paused = False
         self.last_steps: list[dict] = []
         self.last_goal: str = ""
+        self._screenshot_size: tuple[int, int] | None = None
 
     def stop(self) -> None:
         self._stopped = True
@@ -82,6 +83,7 @@ class VisionAgent:
                 return VisionResult("Task stopped.", stopped=True, steps=list(self.last_steps))
 
             image = self.tools.screenshot()
+            self._screenshot_size = tuple(int(value) for value in image.size)
             decision = self._decide(goal, image)
             action = str(decision.get("action", "done")).casefold()
             message = str(decision.get("message", ""))
@@ -145,21 +147,50 @@ class VisionAgent:
             record["amount"] = int(decision.get("amount", -5))
         return record
 
-    @staticmethod
-    def _target_point(decision: dict) -> tuple[int, int] | None:
+    @classmethod
+    def _screen_ratio(cls) -> tuple[float, float]:
+        try:
+            import pyautogui
+            screen_w, screen_h = pyautogui.size()
+        except Exception:
+            return 1.0, 1.0
+        if cls._active_instance_screenshot_size := getattr(cls, "_active_screenshot_size", None):
+            shot_w, shot_h = cls._active_instance_screenshot_size
+            if screen_w > 0 and screen_h > 0 and shot_w > 0 and shot_h > 0:
+                return screen_w / shot_w, screen_h / shot_h
+        return 1.0, 1.0
+
+    def _target_point(self, decision: dict) -> tuple[int, int] | None:
         bbox = decision.get("bbox")
         if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
             try:
-                x1, y1, x2, y2 = [int(float(value)) for value in bbox]
-                return round((x1 + x2) / 2), round((y1 + y2) / 2)
+                x1, y1, x2, y2 = [float(value) for value in bbox]
+                cx = (x1 + x2) / 2.0
+                cy = (y1 + y2) / 2.0
+                ratio_x, ratio_y = self._get_coordinate_ratio()
+                return round(cx * ratio_x), round(cy * ratio_y)
             except (TypeError, ValueError):
                 pass
         if "x" in decision and "y" in decision:
             try:
-                return int(float(decision["x"])), int(float(decision["y"]))
+                ratio_x, ratio_y = self._get_coordinate_ratio()
+                return round(float(decision["x"]) * ratio_x), round(float(decision["y"]) * ratio_y)
             except (TypeError, ValueError):
                 return None
         return None
+
+    def _get_coordinate_ratio(self) -> tuple[float, float]:
+        if not self._screenshot_size:
+            return 1.0, 1.0
+        try:
+            import pyautogui
+            screen_w, screen_h = pyautogui.size()
+            shot_w, shot_h = self._screenshot_size
+            if shot_w > 0 and shot_h > 0 and screen_w > 0 and screen_h > 0:
+                return screen_w / shot_w, screen_h / shot_h
+        except Exception:
+            pass
+        return 1.0, 1.0
 
     def _decide(self, goal: str, image) -> dict:
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as handle:
@@ -174,7 +205,7 @@ class VisionAgent:
             "Goal: " + goal + "\n"
             "Available actions: click, double_click, right_click, type, press, hotkey, scroll, wait, done.\n"
             "For click/double_click/right_click, prefer a bbox field [left, top, right, bottom] for the exact visible target and use its center; "
-            "only use x/y when a bounding box is not possible. Coordinates must use the screenshot's pixel coordinate system.\n"
+            "only use x/y when a bounding box is not possible. Coordinates must be expressed in the screenshot's pixel coordinate system, not browser/CSS coordinates.\n"
             "After an explicit single click request has been successfully executed, return done rather than requesting another click.\n"
             "For a multi-step goal, after each action inspect the new screenshot and return done as soon as the requested end state is visibly achieved. "
             "Never repeat an identical click unless the screen visibly changed and the repeat is necessary. "
