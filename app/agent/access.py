@@ -1,4 +1,9 @@
-"""User-facing desktop access permissions with persistent local consent."""
+"""Local capability state for desktop automation.
+
+Desktop automation is intentionally enabled by default for this local-only app.
+The application does not display a separate permission dialog; Windows/PyAutoGUI
+controls access at the OS/session level.
+"""
 
 from __future__ import annotations
 
@@ -9,18 +14,27 @@ from threading import RLock
 
 
 class AccessManager:
-    """Persist explicit consent for capabilities that can inspect/control the user's computer."""
+    """Persist local capability state without blocking visual automation."""
 
     _DEFAULTS = {
-        "screen": False,
-        "input": False,
-        "browser": False,
+        "screen": True,
+        "input": True,
+        "browser": True,
     }
 
     def __init__(self) -> None:
         self._lock = RLock()
         self._path = self._state_path()
         self._permissions = self._load()
+        # Existing installs may contain the old all-false defaults. Treat missing
+        # capabilities as enabled so upgrading does not leave visual control blocked.
+        changed = False
+        for key, default in self._DEFAULTS.items():
+            if key not in self._permissions:
+                self._permissions[key] = default
+                changed = True
+        if changed:
+            self._save()
 
     @staticmethod
     def _state_path() -> Path:
@@ -35,6 +49,12 @@ class AccessManager:
             return {key: bool(data.get(key, default)) for key, default in self._DEFAULTS.items()}
         except (OSError, ValueError, TypeError):
             return dict(self._DEFAULTS)
+
+    def _save(self) -> None:
+        try:
+            self._path.write_text(json.dumps(self._permissions, indent=2), encoding="utf-8")
+        except OSError:
+            pass
 
     def is_allowed(self, capability: str) -> bool:
         with self._lock:
@@ -51,10 +71,7 @@ class AccessManager:
             raise ValueError(f"Unknown capability: {capability}")
         with self._lock:
             self._permissions[capability] = value
-            try:
-                self._path.write_text(json.dumps(self._permissions, indent=2), encoding="utf-8")
-            except OSError:
-                pass
+            self._save()
 
     def snapshot(self) -> dict[str, bool]:
         with self._lock:
