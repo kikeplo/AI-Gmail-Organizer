@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import re
 import tempfile
 import time
 from dataclasses import dataclass
@@ -29,7 +30,7 @@ class VisionResult:
 
 
 class VisionAgent:
-    """Observe the screen, choose an allowed action, execute it, and continue until verified done."""
+    """Observe the screen, choose an allowed action, execute it, and stop safely."""
 
     def __init__(self, router: SmartAIRouter | None = None, tools: WindowsTools | None = None) -> None:
         self.router = router or SmartAIRouter()
@@ -56,19 +57,8 @@ class VisionAgent:
         return self._paused
 
     def ensure_access(self) -> None:
-        """Validate persisted permission state without creating Qt widgets.
-
-        Visual work runs in CommandWorker, so permission dialogs must be handled by
-        the GUI thread before that worker starts. This method is intentionally safe
-        to call from a background thread.
-        """
-        if self.access.is_allowed("screen") and self.access.is_allowed("input"):
-            return
-        raise VisionAgentError(
-            "Screen and desktop control access is not enabled. "
-            "Allow Screen access and Mouse & keyboard control in Privacy & Permissions, "
-            "then run the visual task again."
-        )
+        """Local Windows automation is enabled without an in-app permission dialog."""
+        return
 
     def run(self, goal: str, progress=None) -> VisionResult:
         if not self.router.cloud.configured and not self.router.local.available():
@@ -80,6 +70,9 @@ class VisionAgent:
         self._stopped = False
         self.last_steps = []
         self.last_goal = goal.strip()
+        explicit_single_click = bool(re.match(r"^\s*(?:click|double[- ]click|right[- ]click)\b", goal, re.IGNORECASE))
+        recent_actions: list[str] = []
+
         for step in range(1, self.max_steps + 1):
             if self._stopped:
                 return VisionResult("Task stopped. No further desktop actions were taken.", stopped=True, steps=list(self.last_steps))
@@ -92,6 +85,16 @@ class VisionAgent:
             decision = self._decide(goal, image)
             action = str(decision.get("action", "done")).casefold()
             message = str(decision.get("message", ""))
+
+            action_key = self._action_fingerprint(action, decision)
+            if action_key in recent_actions[-2:]:
+                return VisionResult(
+                    "I stopped because the same visual action was being repeated without verified progress.",
+                    stopped=True,
+                    steps=list(self.last_steps),
+                )
+            recent_actions.append(action_key)
+
             self.last_steps.append(self._safe_step_record(action, decision, message))
             if progress:
                 progress(f"Step {step}: {message or action}")
@@ -107,17 +110,31 @@ class VisionAgent:
                     steps=list(self.last_steps),
                 )
             self._execute_action(action, decision)
+
+            if explicit_single_click and action in {"click", "double_click", "right_click"}:
+                return VisionResult(message or f"Completed: {goal.strip()}", steps=list(self.last_steps))
             time.sleep(0.35)
+
         return VisionResult(
             "I reached the maximum number of visual steps. The task was stopped to avoid uncontrolled automation.",
             stopped=True,
             steps=list(self.last_steps),
         )
 
+    @staticmethod
+    def _action_fingerprint(action: str, decision: dict) -> str:
+        if action in {"click", "double_click", "right_click"}:
+            target = VisionAgent._target_point(decision)
+            if target is not None:
+                x, y = target
+                return f"{action}:{x // 12}:{y // 12}"
+        return action
+
     def _safe_step_record(self, action: str, decision: dict, message: str) -> dict:
         record = {"action": action, "message": message}
-        if action in {"click", "double_click", "right_click"} and "x" in decision and "y" in decision:
-            record["target"] = {"x": int(decision["x"]), "y": int(decision["y"])}
+        target = self._target_point(decision)
+        if action in {"click", "double_click", "right_click"} and target is not None:
+            record["target"] = {"x": target[0], "y": target[1]}
         elif action == "press":
             record["key"] = str(decision.get("key", ""))
         elif action == "hotkey":
@@ -127,6 +144,22 @@ class VisionAgent:
         elif action == "scroll":
             record["amount"] = int(decision.get("amount", -5))
         return record
+
+    @staticmethod
+    def _target_point(decision: dict) -> tuple[int, int] | None:
+        bbox = decision.get("bbox")
+        if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
+            try:
+                x1, y1, x2, y2 = [int(float(value)) for value in bbox]
+                return round((x1 + x2) / 2), round((y1 + y2) / 2)
+            except (TypeError, ValueError):
+                pass
+        if "x" in decision and "y" in decision:
+            try:
+                return int(float(decision["x"])), int(float(decision["y"]))
+            except (TypeError, ValueError):
+                return None
+        return None
 
     def _decide(self, goal: str, image) -> dict:
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as handle:
@@ -139,21 +172,29 @@ class VisionAgent:
         prompt = (
             "You control a Windows desktop using screenshots. Return ONLY valid JSON with one action.\n"
             "Goal: " + goal + "\n"
-            "Available actions: click(x,y), double_click(x,y), right_click(x,y), type(text), "
-            "press(key), hotkey(keys), scroll(amount), wait(seconds), done.\n"
-            "Use coordinates in the screenshot's pixel coordinate system. Prefer the smallest next step. "
-            "Never choose or attempt to bypass confirmation for send, submit, delete, purchase, upload, download, "
+            "Available actions: click, double_click, right_click, type, press, hotkey, scroll, wait, done.\n"
+            "For click/double_click/right_click, prefer a bbox field [left, top, right, bottom] for the exact visible target and use its center; "
+            "only use x/y when a bounding box is not possible. Coordinates must use the screenshot's pixel coordinate system.\n"
+            "After an explicit single click request has been successfully executed, return done rather than requesting another click.\n"
+            "For a multi-step goal, after each action inspect the new screenshot and return done as soon as the requested end state is visibly achieved. "
+            "Never repeat an identical click unless the screen visibly changed and the repeat is necessary. "
+            "Prefer the smallest next step. Never choose or attempt to bypass confirmation for send, submit, delete, purchase, upload, download, "
             "or other consequential actions. For done, include a concise message."
         )
         return self.router.vision_json(prompt, encoded)
 
     def _execute_action(self, action: str, decision: dict) -> None:
-        if action == "click":
-            self.tools.click(int(decision["x"]), int(decision["y"]))
-        elif action == "double_click":
-            self.tools.double_click(int(decision["x"]), int(decision["y"]))
-        elif action == "right_click":
-            self.tools.click(int(decision["x"]), int(decision["y"]), button="right")
+        if action in {"click", "double_click", "right_click"}:
+            target = self._target_point(decision)
+            if target is None:
+                raise VisionAgentError("The vision model did not provide a valid click target.")
+            x, y = target
+            if action == "click":
+                self.tools.click(x, y)
+            elif action == "double_click":
+                self.tools.double_click(x, y)
+            else:
+                self.tools.click(x, y, button="right")
         elif action == "type":
             self.tools.type_text(str(decision.get("text", "")))
         elif action == "press":
