@@ -7,7 +7,7 @@ import io
 import json
 import re
 from dataclasses import dataclass
-from typing import Callable
+from typing import Any, Callable
 
 from app.agent.access import AccessManager
 from app.ai.provider import AIProvider, AIProviderError
@@ -31,12 +31,14 @@ class VisionResult:
 class VisionAgent:
     """Use a vision-capable model to operate the local Windows desktop iteratively."""
 
-    def __init__(self, provider: AIProvider | None = None, tools: WindowsTools | None = None, access: AccessManager | None = None) -> None:
+    def __init__(self, provider: Any | None = None, tools: WindowsTools | None = None, access: AccessManager | None = None) -> None:
         self.provider = provider or AIProvider()
         self.tools = tools or WindowsTools()
         self.access = access or AccessManager()
         self.stop_requested = False
         self.pause_requested = False
+        self.last_goal: str | None = None
+        self.last_steps: tuple[VisionStep, ...] = ()
 
     def stop(self) -> None:
         self.stop_requested = True
@@ -47,12 +49,23 @@ class VisionAgent:
     def resume(self) -> None:
         self.pause_requested = False
 
+    def _provider_available(self) -> bool:
+        configured = getattr(self.provider, "configured", None)
+        if configured is not None:
+            return bool(configured)
+        configured_providers = getattr(self.provider, "configured_providers", None)
+        if callable(configured_providers):
+            return bool(configured_providers())
+        return False
+
     def run(self, goal: str, max_steps: int = 20, on_status: Callable[[str], None] | None = None) -> VisionResult:
         self.stop_requested = False
         self.pause_requested = False
+        self.last_goal = goal
         steps: list[VisionStep] = []
+        self.last_steps = ()
 
-        if not self.provider.configured:
+        if not self._provider_available():
             raise AIProviderError("Configure an AI provider before using visual desktop control.")
         if not self.access.is_allowed("screen"):
             raise AIProviderError("Screen access is not enabled. Open Settings and allow Screen Access before asking me to look at your screen.")
@@ -61,6 +74,7 @@ class VisionAgent:
 
         for step_number in range(1, max(1, max_steps) + 1):
             if self.stop_requested:
+                self.last_steps = tuple(steps)
                 return VisionResult("Task stopped.", tuple(steps), stopped=True)
 
             while self.pause_requested and not self.stop_requested:
@@ -76,10 +90,11 @@ class VisionAgent:
             encoded = base64.b64encode(image_buffer.getvalue()).decode("ascii")
 
             prompt = self._planning_prompt(goal, step_number, max_steps)
-            raw = self.provider.chat_with_image(prompt, encoded, system_text=self._system_prompt())
+            raw = self._vision_request(prompt, encoded)
             decision = self._parse_decision(raw)
 
             if decision.get("done"):
+                self.last_steps = tuple(steps)
                 return VisionResult(decision.get("message", "Task completed."), tuple(steps))
 
             action = decision.get("action")
@@ -90,6 +105,7 @@ class VisionAgent:
             if action_name in {"send", "delete", "trash", "empty_trash", "purchase", "submit_form"}:
                 description = str(action.get("description") or action_name)
                 steps.append(VisionStep("confirmation", description))
+                self.last_steps = tuple(steps)
                 return VisionResult(
                     f"I found a potentially consequential action: {description}. Confirm it before I continue.",
                     tuple(steps),
@@ -98,10 +114,21 @@ class VisionAgent:
 
             detail = self._execute_action(action)
             steps.append(VisionStep(action_name, detail))
+            self.last_steps = tuple(steps)
             if on_status:
                 on_status(detail)
 
+        self.last_steps = tuple(steps)
         return VisionResult("I reached the visual task step limit without confidently completing the task.", tuple(steps))
+
+    def _vision_request(self, prompt: str, image_base64: str) -> dict | str:
+        vision_json = getattr(self.provider, "vision_json", None)
+        if callable(vision_json):
+            return vision_json(prompt, image_base64)
+        chat_with_image = getattr(self.provider, "chat_with_image", None)
+        if callable(chat_with_image):
+            return chat_with_image(prompt, image_base64, system_text=self._system_prompt())
+        raise AIProviderError("The configured AI provider does not expose a vision interface. Choose a vision-capable provider.")
 
     @staticmethod
     def _system_prompt() -> str:
@@ -132,13 +159,16 @@ class VisionAgent:
         )
 
     @staticmethod
-    def _parse_decision(raw: str) -> dict:
-        cleaned = raw.strip()
-        cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", cleaned, flags=re.IGNORECASE | re.DOTALL).strip()
-        try:
-            parsed = json.loads(cleaned)
-        except json.JSONDecodeError as exc:
-            raise AIProviderError("The vision model returned invalid JSON. Choose a vision-capable model and try again.") from exc
+    def _parse_decision(raw: dict | str) -> dict:
+        if isinstance(raw, dict):
+            parsed = raw
+        else:
+            cleaned = raw.strip()
+            cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", cleaned, flags=re.IGNORECASE | re.DOTALL).strip()
+            try:
+                parsed = json.loads(cleaned)
+            except json.JSONDecodeError as exc:
+                raise AIProviderError("The vision model returned invalid JSON. Choose a vision-capable model and try again.") from exc
         if not isinstance(parsed, dict):
             raise AIProviderError("The vision model returned an invalid decision format.")
         return parsed
