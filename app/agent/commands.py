@@ -97,7 +97,25 @@ class CommandAgent:
                 mode="procedure_found",
             )
 
-        if self._looks_like_browser_task(lowered):
+        # Gmail UI commands should use visual computer control when the user is
+        # asking to manipulate the Gmail web interface rather than the Gmail API.
+        # This intentionally runs before the deterministic Windows router because
+        # phrases such as "open starred on my Gmail" contain the generic word
+        # "open" but are not Windows app-launch requests.
+        if self._looks_like_gmail_ui_task(lowered):
+            try:
+                result = self.vision.run(command, progress=on_status)
+                response = AgentResponse(result.text, mode="vision")
+                if not result.stopped and not result.needs_confirmation and result.steps:
+                    name = self._procedure_name(command)
+                    procedure_id = self.procedures.save(name, command, result.steps)
+                    self.procedures.record_result(procedure_id, True)
+                    response = AgentResponse(result.text + f"\n\nSaved this successful workflow as '{name}' for future reuse.", mode="vision_learned")
+            except VisionAgentError as exc:
+                response = AgentResponse(str(exc), mode="vision_error")
+            except Exception as exc:
+                response = AgentResponse(f"Visual task failed.\n\n{exc}", mode="vision_error")
+        elif self._looks_like_browser_task(lowered):
             try:
                 response = self._handle_browser(command)
             except BrowserAutomationError as exc:
@@ -107,12 +125,12 @@ class CommandAgent:
         elif self._looks_like_visual_task(lowered):
             try:
                 result = self.vision.run(command, progress=on_status)
-                response = AgentResponse(result, mode="vision")
-                if not result.lower().startswith("task stopped") and not result.lower().startswith("i paused") and getattr(self.vision, "last_steps", None):
+                response = AgentResponse(result.text, mode="vision")
+                if not result.stopped and not result.needs_confirmation and result.steps:
                     name = self._procedure_name(command)
-                    procedure_id = self.procedures.save(name, command, self.vision.last_steps)
+                    procedure_id = self.procedures.save(name, command, result.steps)
                     self.procedures.record_result(procedure_id, True)
-                    response = AgentResponse(result + f"\n\nSaved this successful workflow as '{name}' for future reuse.", mode="vision_learned")
+                    response = AgentResponse(result.text + f"\n\nSaved this successful workflow as '{name}' for future reuse.", mode="vision_learned")
             except VisionAgentError as exc:
                 response = AgentResponse(str(exc), mode="vision_error")
             except Exception as exc:
@@ -183,11 +201,23 @@ class CommandAgent:
 
     @staticmethod
     def _split_task(goal: str) -> list[str]:
-        parts = re.split(r"\s*(?:\bthen\b|\band then\b|;|\n)\s*", goal, flags=re.IGNORECASE)
-        parts = [re.sub(r"^\s*(?:\d+\.|[-•])\s*", "", part).strip(" .") for part in parts if part.strip()]
-        if len(parts) == 1 and "," in parts[0]:
-            parts = [p.strip() for p in parts[0].split(",") if p.strip()]
-        return parts[:12]
+        # Preserve natural chains such as "open Chrome, go to Gmail, open Starred"
+        # and "open Chrome then go to Gmail and open Starred". Avoid splitting on
+        # every occurrence of "and" because that can break ordinary phrases.
+        normalized = re.sub(r"\s+", " ", goal.strip())
+        parts = re.split(r"\s*(?:\bthen\b|\band then\b|;|\n)\s*", normalized, flags=re.IGNORECASE)
+        expanded: list[str] = []
+        for part in parts:
+            part = part.strip(" .,-")
+            if not part:
+                continue
+            comma_parts = [p.strip(" .,-") for p in re.split(r"\s*,\s*", part) if p.strip(" .,-")]
+            if len(comma_parts) > 1:
+                expanded.extend(comma_parts)
+                continue
+            and_parts = re.split(r"\s+and\s+(?=(?:open|go|navigate|click|double[- ]click|right[- ]click|select|type|press|scroll|launch|start)\b)", part, flags=re.IGNORECASE)
+            expanded.extend([p.strip(" .,-") for p in and_parts if p.strip(" .,-")])
+        return [re.sub(r"^\s*(?:\d+\.|[-•])\s*", "", part).strip() for part in expanded[:12]]
 
     def _run_task(self, task, on_status=None) -> AgentResponse:
         self._running_task = True
@@ -288,12 +318,33 @@ class CommandAgent:
         return None
 
     @staticmethod
+    def _looks_like_gmail_ui_task(text: str) -> bool:
+        """Recognize Gmail web-interface navigation, including natural phrasing."""
+        gmail_context = ("gmail", "gmail.com", "my email", "my inbox", "google mail")
+        ui_verbs = (
+            "open", "go to", "navigate", "click", "select", "choose", "find", "look at",
+            "show", "switch", "scroll", "search", "star", "unstar", "mark", "read", "unread",
+        )
+        gmail_views = (
+            "starred", "inbox", "sent", "drafts", "spam", "trash", "snoozed", "important",
+            "promotions", "social", "updates", "categories", "labels", "all mail", "settings",
+        )
+        return any(term in text for term in gmail_context) and any(verb in text for verb in ui_verbs) and (
+            any(view in text for view in gmail_views) or "on gmail" in text or "in gmail" in text or "gmail" in text
+        )
+
+    @staticmethod
     def _looks_like_browser_task(text: str) -> bool:
         return any(term in text for term in ("browser", "web page", "website", "web site", "open gmail", "navigate to gmail", "click the promotions tab", "promotions tab")) and not any(term in text for term in ("desktop", "desktop icon", "on my desktop"))
 
     @staticmethod
     def _looks_like_visual_task(text: str) -> bool:
-        visual_terms = ("click", "double-click", "double click", "right-click", "right click", "on the screen", "on screen", "look at", "find on screen", "find on the screen", "navigate", "open the tab", "select the tab", "go to the tab", "on gmail", "in chrome", "in the browser", "visually")
+        visual_terms = (
+            "click", "double-click", "double click", "right-click", "right click", "on the screen", "on screen",
+            "look at", "find on screen", "find on the screen", "navigate", "open the tab", "select the tab",
+            "go to the tab", "on gmail", "in gmail", "on my gmail", "in my gmail", "in chrome", "in the browser",
+            "visually", "starred", "promotions", "inbox tab", "sidebar",
+        )
         return any(term in text for term in visual_terms) and not any(term in text for term in ("on my desktop", "desktop icon", "desktop app"))
 
     def _handle_browser(self, command: str) -> AgentResponse:
