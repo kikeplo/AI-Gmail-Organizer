@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from types import MethodType
 
 from app.gmail.bulk import BulkGmailService
@@ -22,21 +23,19 @@ def install_bulk_gmail(agent) -> None:
             return connection_error
 
         if on_status:
-            on_status("Inspecting the desktop and opening Gmail…")
+            on_status("Checking recent inbox messages…")
         try:
-            # Best-effort visible Gmail navigation. The actual 500-message
-            # matching stays on the Gmail API for accuracy and speed.
-            try:
-                self.windows.tools.launch_named_application("chrome")
-                import time
-                time.sleep(0.7)
-                import pyautogui
-                pyautogui.hotkey("ctrl", "l")
-                pyautogui.write("https://mail.google.com", interval=0.01)
-                pyautogui.press("enter")
-                time.sleep(1.0)
-            except Exception:
-                pass
+            # Gmail API analysis is the source of truth. Opening Chrome is
+            # optional because it adds noticeable startup/navigation latency.
+            if os.getenv("OPEN_GMAIL_FOR_BULK", "0").strip().lower() in {"1", "true", "yes"}:
+                try:
+                    self.windows.tools.launch_named_application("chrome")
+                    import pyautogui
+                    pyautogui.hotkey("ctrl", "l")
+                    pyautogui.write("https://mail.google.com", interval=0.0)
+                    pyautogui.press("enter")
+                except Exception:
+                    pass
 
             plan = bulk.build_archive_plan(command)
             if not plan.messages:
@@ -56,8 +55,7 @@ def install_bulk_gmail(agent) -> None:
         result = original_confirm(action, confirmed)
         if confirmed and getattr(action, "action", None) == "archive" and getattr(action, "message_ids", None):
             try:
-                remaining = self.gmail.list_messages(query="in:inbox", max_results=500)
-                remaining_ids = {message.id for message in remaining}
+                remaining_ids = set(self.gmail.list_message_ids(query="in:inbox", max_results=500))
                 archived = sum(1 for message_id in action.message_ids if message_id not in remaining_ids)
                 total = len(action.message_ids)
                 if archived == total:
