@@ -36,6 +36,7 @@ class AIProvider:
         self.base_url = os.getenv("OPENAI_BASE_URL", "").strip()
         self.provider = os.getenv("AI_PROVIDER", "").strip()
         self.model = os.getenv("OPENAI_MODEL", "").strip()
+        self._resolved_model: str | None = self.model or None
 
     @property
     def configured(self) -> bool:
@@ -89,15 +90,17 @@ class AIProvider:
         return result
 
     def resolve_model(self) -> str:
-        if self.model: return self.model
+        if self._resolved_model:
+            return self._resolved_model
         models = self.list_models()
         blocked = ("embedding", "moderation", "image", "audio", "tts", "whisper")
         preferred = [m for m in models if not any(token in m.lower() for token in blocked)]
-        return preferred[0] if preferred else models[0]
+        self._resolved_model = preferred[0] if preferred else models[0]
+        return self._resolved_model
 
     def capabilities(self, model: str | None = None) -> AICapabilities:
         """Infer useful capabilities from provider/model metadata without requiring a paid probe."""
-        selected = (model or self.model or "").lower()
+        selected = (model or self.model or self._resolved_model or "").lower()
         protocol = self._protocol()
         vision = any(token in selected for token in ("vision", "-vl", "vlm", "gemini", "claude-3", "claude-4", "gpt-4o", "gpt-4.1", "gpt-5", "qwen2.5-vl", "qwen3-vl", "llama-4"))
         structured = protocol in {"gemini", "anthropic", "openai_compatible"}
