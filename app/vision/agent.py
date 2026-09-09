@@ -97,7 +97,7 @@ class VisionAgent:
                 )
             recent_actions.append(action_key)
 
-            if action in {"click", "double_click", "right_click"}:
+            if action in {"click", "double_click", "right_click"} and self._needs_target_verification(decision):
                 verified = self._verify_click_target(goal, image, decision)
                 if verified is None:
                     return VisionResult(
@@ -125,12 +125,12 @@ class VisionAgent:
             self._execute_action(action, decision)
 
             if explicit_single_click and action in {"click", "double_click", "right_click"}:
-                verification = self._verify_post_click(goal)
-                record = self.last_steps[-1]
-                record["post_click_verified"] = verification
-                suffix = " The resulting screen state was verified." if verification else " The click was executed, but the resulting screen state could not be verified."
-                return VisionResult((message or f"Completed: {goal.strip()}") + suffix, steps=list(self.last_steps))
-            time.sleep(0.35)
+                # Fast path: explicit clicks finish after execution. A model can
+                # request an extra verification pass explicitly when confidence is low.
+                return VisionResult(
+                    message or f"Completed: {goal.strip()}",
+                    steps=list(self.last_steps),
+                )
 
         return VisionResult(
             "I reached the maximum number of visual steps. The task was stopped to avoid uncontrolled automation.",
@@ -146,6 +146,18 @@ class VisionAgent:
                 x, y = target
                 return f"{action}:{x // 12}:{y // 12}"
         return action
+
+    @staticmethod
+    def _needs_target_verification(decision: dict) -> bool:
+        """Only spend a second vision call on uncertain targets."""
+        explicit = decision.get("verify_target")
+        if isinstance(explicit, bool):
+            return explicit
+        try:
+            confidence = float(decision.get("confidence", 1.0))
+            return confidence < 0.75
+        except (TypeError, ValueError):
+            return False
 
     def _safe_step_record(self, action: str, decision: dict, message: str) -> dict:
         record = {"action": action, "message": message}
@@ -205,17 +217,18 @@ class VisionAgent:
             "You control a Windows desktop using screenshots. Return ONLY valid JSON with one action.\n"
             "Goal: " + goal + "\n"
             "Available actions: click, double_click, right_click, type, press, hotkey, scroll, wait, done.\n"
-            "For click/double_click/right_click, prefer a bbox field [left, top, right, bottom] for the exact visible target and use its center; "
-            "only use x/y when a bounding box is not possible. Coordinates must be expressed in the screenshot's pixel coordinate system, not browser/CSS coordinates.\n"
-            "After an explicit single click request has been successfully executed, return done rather than requesting another click.\n"
-            "For a multi-step goal, after each action inspect the new screenshot and return done as soon as the requested end state is visibly achieved. "
+            "For click/double_click/right_click, prefer bbox [left, top, right, bottom] for the exact visible target and use its center; "
+            "only use x/y when a bounding box is not possible. Coordinates are screenshot pixels, not browser/CSS coordinates.\n"
+            "Include confidence as a number from 0 to 1 for click targets, and set verify_target=true only when a second visual check is genuinely needed.\n"
+            "After an explicit single click request is executed, return done rather than requesting another click.\n"
+            "For multi-step goals, inspect the new screenshot after each action and return done as soon as the requested end state is visibly achieved. "
             "Never repeat an identical click unless the screen visibly changed and the repeat is necessary. "
             "Prefer the smallest next step. Never choose or attempt to bypass confirmation for send, submit, delete, purchase, upload, download, "
             "or other consequential actions. For done, include a concise message."
         )
 
     def _verify_click_target(self, goal: str, image, decision: dict) -> dict | None:
-        """Use a second vision pass to validate/refine a proposed click before executing it."""
+        """Use a second vision pass only when a target was marked uncertain."""
         candidate = self._raw_target_point(decision)
         if candidate is None:
             return None
@@ -235,14 +248,9 @@ class VisionAgent:
         prompt = (
             "Verify a proposed desktop click target. Return ONLY valid JSON.\n"
             "Goal: " + goal + "\n"
-            f"The proposed click point is ({round(candidate[0])}, {round(candidate[1])}) in screenshot pixels. "
-            "It is marked by a red crosshair.\n"
-            "Determine whether that point is actually inside the clickable portion of the requested target. "
-            "Do not use browser/CSS coordinates.\n"
+            f"The proposed click point is ({round(candidate[0])}, {round(candidate[1])}) in screenshot pixels and is marked by a red crosshair.\n"
             'Return exactly: {"approved": true/false, "x": number, "y": number, "message": "..."}.\n'
-            "If the point is slightly wrong but the target is visible, return approved=true and the corrected screenshot-pixel x/y. "
-            "The corrected point should be safely inside the clickable target, not on empty padding, an adjacent row, or another control. "
-            "Prefer the visual center of the actual clickable text/icon row."
+            "Approve only when the point is safely inside the requested target. If slightly wrong, return a corrected point inside the clickable area."
         )
         result = self._vision_json(annotated, prompt)
         if not bool(result.get("approved", False)):
@@ -258,22 +266,6 @@ class VisionAgent:
         corrected["y"] = y
         corrected["message"] = str(result.get("message", decision.get("message", "")))
         return corrected
-
-    def _verify_post_click(self, goal: str) -> bool:
-        """Check the new screen once after an explicit click; never auto-click again here."""
-        try:
-            image = self.tools.screenshot()
-            prompt = (
-                "Verify whether a desktop action succeeded. Return ONLY valid JSON.\n"
-                "Requested goal: " + goal + "\n"
-                'Return exactly: {"success": true/false, "message": "..."}.\n'
-                "Look at the current screen and decide whether the requested click action appears to have produced the intended result. "
-                "Do not require a specific animation or transient visual detail if the resulting UI state is clearly present."
-            )
-            result = self._vision_json(image, prompt)
-            return bool(result.get("success", False))
-        except Exception:
-            return False
 
     def _vision_json(self, image, prompt: str) -> dict:
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as handle:
