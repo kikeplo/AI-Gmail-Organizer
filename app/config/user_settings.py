@@ -31,16 +31,18 @@ def save_api_key(api_key: str) -> None:
 
 
 def save_backup_api_keys(api_keys: list[str]) -> None:
-    """Persist backup API keys as one key per line in the local app config."""
+    """Persist backup API keys as a comma-separated local setting."""
     cleaned = [str(key).strip() for key in api_keys if str(key).strip()]
-    set_key(str(ENV_FILE), "OPENAI_API_KEYS", "\n".join(cleaned))
+    set_key(str(ENV_FILE), "OPENAI_API_KEYS", ",".join(cleaned))
 
 
 def get_api_keys(config: dict[str, str] | None = None) -> list[str]:
     """Return primary + backup API keys in configured order, without duplicates."""
     values = config or read_config()
     result: list[str] = []
-    for key in [values.get("OPENAI_API_KEY", ""), *values.get("OPENAI_API_KEYS", "").splitlines()]:
+    backup_text = values.get("OPENAI_API_KEYS", "")
+    raw_backups = [item for chunk in backup_text.splitlines() for item in chunk.split(",")]
+    for key in [values.get("OPENAI_API_KEY", ""), *raw_backups]:
         normalized = key.strip()
         if normalized and normalized not in result:
             result.append(normalized)
