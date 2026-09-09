@@ -11,7 +11,15 @@ from PySide6.QtWidgets import (
 )
 
 from app.ai.provider import AIProvider
-from app.config.user_settings import read_config, save_api_key, save_base_url, save_gmail_client_id, save_model, save_provider_name
+from app.config.user_settings import (
+    read_config,
+    save_api_key,
+    save_backup_api_keys,
+    save_base_url,
+    save_gmail_client_id,
+    save_model,
+    save_provider_name,
+)
 from app.gmail.client import GmailClient
 from app.ui.help_dialog import HelpDialog
 
@@ -76,16 +84,37 @@ class GoogleSetupDialog(QDialog):
 
 
 class SetupDialog(QDialog):
-    """Modern application settings with friendly provider and Gmail setup."""
+    """Modern application settings with provider, API-key failover, and Gmail setup."""
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("AI Gmail Organizer — Settings")
-        self.setMinimumWidth(720)
+        self.setMinimumWidth(760)
         self._loader: _ModelLoader | None = None; self._google_login: _GoogleLogin | None = None
         config = read_config(); layout = QVBoxLayout(self); form = QFormLayout()
+
         self.provider = QLineEdit(config.get("AI_PROVIDER", "")); self.provider.setPlaceholderText("Optional — Gemini, Anthropic, Ollama, OpenRouter, etc."); form.addRow("AI provider", self.provider)
-        self.api_key = QLineEdit(config.get("OPENAI_API_KEY", "")); self.api_key.setEchoMode(QLineEdit.Password); self.api_key.setPlaceholderText("Optional for keyless/local providers"); form.addRow("API key", self.api_key)
+        self.api_key = QLineEdit(config.get("OPENAI_API_KEY", "")); self.api_key.setEchoMode(QLineEdit.Password); self.api_key.setPlaceholderText("Primary API key"); form.addRow("Primary API key", self.api_key)
+
+        backup_text = config.get("OPENAI_API_KEYS", "")
+        backup_values = [item.strip() for chunk in backup_text.splitlines() for item in chunk.split(",") if item.strip()]
+        for index in range(1, 6):
+            legacy = config.get("OPENAI_API_KEY_BACKUP" if index == 1 else f"OPENAI_API_KEY_BACKUP_{index}", "").strip()
+            if legacy and legacy not in backup_values:
+                backup_values.append(legacy)
+        self.backup_keys: list[QLineEdit] = []
+        backup_container = QVBoxLayout(); backup_container.setContentsMargins(0, 0, 0, 0); backup_container.setSpacing(6)
+        for index in range(5):
+            field = QLineEdit(backup_values[index] if index < len(backup_values) else "")
+            field.setEchoMode(QLineEdit.Password)
+            field.setPlaceholderText(f"Backup API key {index + 1} — optional")
+            field.setClearButtonEnabled(True)
+            self.backup_keys.append(field)
+            backup_container.addWidget(field)
+        backup_hint = QLabel("Use the backups when the primary key is unavailable, rate-limited, or over quota. Keys stay in the app's local settings.")
+        backup_hint.setWordWrap(True); backup_hint.setObjectName("backupHint"); backup_container.addWidget(backup_hint)
+        form.addRow("Backup API keys", backup_container)
+
         self.base_url = QLineEdit(config.get("OPENAI_BASE_URL", "")); self.base_url.setPlaceholderText("API endpoint/base URL"); form.addRow("API base URL", self.base_url)
         model_row = QHBoxLayout(); self.model = QComboBox(); self.model.setEditable(True); self.model.setInsertPolicy(QComboBox.NoInsert); self.model.setPlaceholderText("Automatic — select a model or leave blank"); saved_model = config.get("OPENAI_MODEL", "");
         if saved_model: self.model.addItem(saved_model); self.model.setCurrentText(saved_model)
@@ -94,7 +123,7 @@ class SetupDialog(QDialog):
         layout.addLayout(form)
         self.capability_box = QLabel("Capabilities\nNot checked yet — select a model or leave it on Automatic, then click Check capabilities."); self.capability_box.setWordWrap(True); self.capability_box.setObjectName("capabilityBox"); layout.addWidget(self.capability_box)
         capability_button = QPushButton("Check capabilities"); capability_button.clicked.connect(self._check_capabilities); layout.addWidget(capability_button)
-        note = QLabel("AI settings apply immediately after Save. Need help? The Gmail sign-in guide explains each step in plain language."); note.setWordWrap(True); note.setObjectName("settingsNote"); layout.addWidget(note)
+        note = QLabel("AI settings apply immediately after Save. API keys are stored locally and displayed masked. Need help? The Gmail sign-in guide explains each step in plain language."); note.setWordWrap(True); note.setObjectName("settingsNote"); layout.addWidget(note)
         button_row = QHBoxLayout(); help_button = QPushButton("Help"); help_button.clicked.connect(self._open_help); save = QPushButton("Save"); save.clicked.connect(self._save); cancel = QPushButton("Cancel"); cancel.clicked.connect(self.reject); button_row.addWidget(help_button); button_row.addStretch(); button_row.addWidget(cancel); button_row.addWidget(save); layout.addLayout(button_row)
         self.setStyleSheet("""
             QDialog { background: #121620; color: #F1F5F9; } QLabel { color: #E3E8F0; }
@@ -102,12 +131,22 @@ class SetupDialog(QDialog):
             QComboBox QAbstractItemView { color: #F7F8FA; background: #202738; selection-background-color: #35415B; }
             QPushButton { color: #F7F8FA; background: #2A3346; border: 1px solid #46516A; border-radius: 8px; padding: 9px 14px; }
             QPushButton:hover { background: #35415B; }
-            #settingsNote { color: #AAB4C4; background: transparent; border: none; }
+            #settingsNote, #backupHint { color: #AAB4C4; background: transparent; border: none; }
             #capabilityBox { color: #EAF0F8; background: #1A2231; border: 1px solid #354057; border-radius: 10px; padding: 12px; }
         """)
 
     def _provider_for_form(self) -> AIProvider:
-        provider = AIProvider(); provider.provider = self.provider.text().strip(); provider.api_key = self.api_key.text().strip(); provider.base_url = self.base_url.text().strip(); provider.model = self.model.currentText().strip(); return provider
+        provider = AIProvider()
+        provider.provider = self.provider.text().strip()
+        provider.api_key = self.api_key.text().strip()
+        provider.api_keys = [provider.api_key] if provider.api_key else []
+        for field in self.backup_keys:
+            key = field.text().strip()
+            if key and key not in provider.api_keys:
+                provider.api_keys.append(key)
+        provider.base_url = self.base_url.text().strip()
+        provider.model = self.model.currentText().strip()
+        return provider
 
     def _refresh_models(self) -> None:
         if self._loader is not None and self._loader.isRunning(): return
@@ -147,6 +186,6 @@ class SetupDialog(QDialog):
         except Exception as exc: QMessageBox.critical(self, "Help could not be opened", f"The help window could not be opened.\n\n{exc}")
     def _save(self) -> None:
         try:
-            save_provider_name(self.provider.text()); save_api_key(self.api_key.text()); save_base_url(self.base_url.text()); save_model(self.model.currentText().strip())
+            save_provider_name(self.provider.text()); save_api_key(self.api_key.text()); save_backup_api_keys([field.text() for field in self.backup_keys]); save_base_url(self.base_url.text()); save_model(self.model.currentText().strip())
         except OSError as exc: QMessageBox.critical(self, "Could not save settings", str(exc)); return
         self.accept()
