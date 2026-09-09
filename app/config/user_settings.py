@@ -40,8 +40,7 @@ def get_api_keys(config: dict[str, str] | None = None) -> list[str]:
     """Return primary + backup API keys in configured order, without duplicates."""
     values = config or read_config()
     result: list[str] = []
-    backup_text = values.get("OPENAI_API_KEYS", "")
-    raw_backups = [item for chunk in backup_text.splitlines() for item in chunk.split(",")]
+    raw_backups = [item for chunk in values.get("OPENAI_API_KEYS", "").splitlines() for item in chunk.split(",")]
     for key in [values.get("OPENAI_API_KEY", ""), *raw_backups]:
         normalized = key.strip()
         if normalized and normalized not in result:
@@ -69,6 +68,10 @@ def save_local_ai(enabled: bool, base_url: str, model: str) -> None:
     set_key(str(ENV_FILE), "LOCAL_AI_ENABLED", "1" if enabled else "0")
     set_key(str(ENV_FILE), "LOCAL_AI_BASE_URL", base_url.strip().rstrip("/"))
     set_key(str(ENV_FILE), "LOCAL_AI_MODEL", model.strip())
+
+
+def save_routing_mode(mode: str) -> None:
+    set_key(str(ENV_FILE), "AI_ROUTING_MODE", mode.strip().lower())
 
 
 def save_browser_settings(mode: str, cdp_url: str, profile_dir: str) -> None:
