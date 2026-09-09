@@ -53,9 +53,6 @@ class GmailClient:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         elif not creds or not creds.valid:
-            # Preferred desktop-app flow: a browser opens Google's normal
-            # sign-in/consent screen. A client ID can be supplied without
-            # making the user browse for a JSON file.
             client_id = os.getenv("GMAIL_CLIENT_ID", "").strip()
             client_secret = os.getenv("GMAIL_CLIENT_SECRET", "").strip()
             if client_id:
@@ -100,7 +97,10 @@ class GmailClient:
 
     def create_label(self, name: str) -> str:
         self._require_connection()
-        response = self._service.users().labels().create(userId="me", body={"name": name, "labelListVisibility": "labelShow", "messageListVisibility": "show"}).execute()
+        response = self._service.users().labels().create(
+            userId="me",
+            body={"name": name, "labelListVisibility": "labelShow", "messageListVisibility": "show"},
+        ).execute()
         return response["id"]
 
     def list_labels(self) -> list[dict[str, str]]:
@@ -110,11 +110,31 @@ class GmailClient:
 
     def apply_label(self, message_id: str, label_id: str) -> None:
         self._require_connection()
-        self._service.users().messages().modify(userId="me", id=message_id, body={"addLabelIds": [label_id]}).execute()
+        self._service.users().messages().modify(
+            userId="me", id=message_id, body={"addLabelIds": [label_id]}
+        ).execute()
 
     def archive_message(self, message_id: str) -> None:
         self._require_connection()
-        self._service.users().messages().modify(userId="me", id=message_id, body={"removeLabelIds": ["INBOX"]}).execute()
+        self._service.users().messages().modify(
+            userId="me", id=message_id, body={"removeLabelIds": ["INBOX"]}
+        ).execute()
+
+    def batch_archive_messages(self, message_ids: list[str]) -> int:
+        """Archive up to 1000 messages in one Gmail API batchModify request."""
+        self._require_connection()
+        ids = [str(message_id) for message_id in message_ids if message_id]
+        if not ids:
+            return 0
+        completed = 0
+        for start in range(0, len(ids), 1000):
+            batch = ids[start:start + 1000]
+            self._service.users().messages().batchModify(
+                userId="me",
+                body={"ids": batch, "removeLabelIds": ["INBOX"]},
+            ).execute()
+            completed += len(batch)
+        return completed
 
     def _require_connection(self) -> None:
         if not self._service:
