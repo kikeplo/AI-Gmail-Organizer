@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import os
+from typing import Any
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -77,23 +78,53 @@ class GmailClient:
         self.token_file.write_text(creds.to_json(), encoding="utf-8")
         self._service = build("gmail", "v1", credentials=creds)
 
-    def list_messages(self, query: str = "", max_results: int = 10) -> list[GmailMessage]:
+    def list_message_ids(self, query: str = "", max_results: int = 10) -> list[str]:
+        """Return message IDs only; avoids expensive per-message metadata requests."""
         self._require_connection()
         response = self._service.users().messages().list(
-            userId="me", q=query or None, maxResults=max_results
+            userId="me", q=query or None, maxResults=max(1, min(int(max_results), 500))
         ).execute()
-        messages: list[GmailMessage] = []
-        for item in response.get("messages", []):
-            message = self._service.users().messages().get(
-                userId="me", id=item["id"], format="metadata", metadataHeaders=["From", "Subject"]
-            ).execute()
-            headers = {h["name"].lower(): h.get("value", "") for h in message.get("payload", {}).get("headers", [])}
-            messages.append(GmailMessage(
-                id=message["id"], thread_id=message.get("threadId", ""),
-                sender=headers.get("from", ""), subject=headers.get("subject", "(no subject)"),
-                snippet=message.get("snippet", ""),
-            ))
-        return messages
+        return [str(item["id"]) for item in response.get("messages", []) if item.get("id")]
+
+    def list_messages(self, query: str = "", max_results: int = 10) -> list[GmailMessage]:
+        """List messages and fetch metadata using batched HTTP requests for much lower latency."""
+        ids = self.list_message_ids(query=query, max_results=max_results)
+        if not ids:
+            return []
+
+        messages: list[GmailMessage | None] = [None] * len(ids)
+        pending: dict[str, int] = {message_id: index for index, message_id in enumerate(ids)}
+        batch = self._service.new_batch_http_request()
+
+        def callback(request_id: str, response: dict[str, Any], exception: Exception | None) -> None:
+            index = pending.get(request_id)
+            if index is None or exception is not None or not isinstance(response, dict):
+                return
+            headers = {
+                str(header.get("name", "")).lower(): str(header.get("value", ""))
+                for header in response.get("payload", {}).get("headers", [])
+            }
+            messages[index] = GmailMessage(
+                id=str(response.get("id", ids[index])),
+                thread_id=str(response.get("threadId", "")),
+                sender=headers.get("from", ""),
+                subject=headers.get("subject", "(no subject)"),
+                snippet=str(response.get("snippet", "")),
+            )
+
+        for message_id in ids:
+            batch.add(
+                self._service.users().messages().get(
+                    userId="me",
+                    id=message_id,
+                    format="metadata",
+                    metadataHeaders=["From", "Subject"],
+                ),
+                callback=callback,
+                request_id=message_id,
+            )
+        batch.execute()
+        return [message for message in messages if message is not None]
 
     def create_label(self, name: str) -> str:
         self._require_connection()
@@ -128,12 +159,12 @@ class GmailClient:
             return 0
         completed = 0
         for start in range(0, len(ids), 1000):
-            batch = ids[start:start + 1000]
+            chunk = ids[start:start + 1000]
             self._service.users().messages().batchModify(
                 userId="me",
-                body={"ids": batch, "removeLabelIds": ["INBOX"]},
+                body={"ids": chunk, "removeLabelIds": ["INBOX"]},
             ).execute()
-            completed += len(batch)
+            completed += len(chunk)
         return completed
 
     def _require_connection(self) -> None:
