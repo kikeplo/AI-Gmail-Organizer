@@ -94,7 +94,11 @@ class SetupDialog(QDialog):
         config = read_config(); layout = QVBoxLayout(self); form = QFormLayout()
 
         self.provider = QLineEdit(config.get("AI_PROVIDER", "")); self.provider.setPlaceholderText("Optional — Gemini, Anthropic, Ollama, OpenRouter, etc."); form.addRow("AI provider", self.provider)
-        self.api_key = QLineEdit(config.get("OPENAI_API_KEY", "")); self.api_key.setEchoMode(QLineEdit.Password); self.api_key.setPlaceholderText("Primary API key"); form.addRow("Primary API key", self.api_key)
+
+        self.api_key = QLineEdit(config.get("OPENAI_API_KEY", "")); self.api_key.setEchoMode(QLineEdit.Password); self.api_key.setPlaceholderText("Primary API key");
+        self.primary_eye = QPushButton("👁"); self.primary_eye.setCheckable(True); self.primary_eye.setFixedWidth(44); self.primary_eye.setToolTip("Show or hide API key")
+        self.primary_eye.toggled.connect(lambda visible: self._toggle_key_visibility(self.api_key, self.primary_eye, visible))
+        primary_row = QHBoxLayout(); primary_row.setContentsMargins(0, 0, 0, 0); primary_row.setSpacing(6); primary_row.addWidget(self.api_key, 1); primary_row.addWidget(self.primary_eye); form.addRow("Primary API key", primary_row)
 
         backup_text = config.get("OPENAI_API_KEYS", "")
         backup_values = [item.strip() for chunk in backup_text.splitlines() for item in chunk.split(",") if item.strip()]
@@ -109,8 +113,11 @@ class SetupDialog(QDialog):
             field.setEchoMode(QLineEdit.Password)
             field.setPlaceholderText(f"Backup API key {index + 1} — optional")
             field.setClearButtonEnabled(True)
+            eye = QPushButton("👁"); eye.setCheckable(True); eye.setFixedWidth(44); eye.setToolTip("Show or hide API key")
+            eye.toggled.connect(lambda visible, target=field, button=eye: self._toggle_key_visibility(target, button, visible))
+            row = QHBoxLayout(); row.setContentsMargins(0, 0, 0, 0); row.setSpacing(6); row.addWidget(field, 1); row.addWidget(eye)
             self.backup_keys.append(field)
-            backup_container.addWidget(field)
+            backup_container.addLayout(row)
         backup_hint = QLabel("Use the backups when the primary key is unavailable, rate-limited, or over quota. Keys stay in the app's local settings.")
         backup_hint.setWordWrap(True); backup_hint.setObjectName("backupHint"); backup_container.addWidget(backup_hint)
         form.addRow("Backup API keys", backup_container)
@@ -131,9 +138,16 @@ class SetupDialog(QDialog):
             QComboBox QAbstractItemView { color: #F7F8FA; background: #202738; selection-background-color: #35415B; }
             QPushButton { color: #F7F8FA; background: #2A3346; border: 1px solid #46516A; border-radius: 8px; padding: 9px 14px; }
             QPushButton:hover { background: #35415B; }
+            QPushButton[checkable="true"] { min-height: 34px; padding: 6px; }
             #settingsNote, #backupHint { color: #AAB4C4; background: transparent; border: none; }
             #capabilityBox { color: #EAF0F8; background: #1A2231; border: 1px solid #354057; border-radius: 10px; padding: 12px; }
         """)
+
+    @staticmethod
+    def _toggle_key_visibility(field: QLineEdit, button: QPushButton, visible: bool) -> None:
+        field.setEchoMode(QLineEdit.Normal if visible else QLineEdit.Password)
+        button.setText("🙈" if visible else "👁")
+        button.setToolTip("Hide API key" if visible else "Show API key")
 
     def _provider_for_form(self) -> AIProvider:
         provider = AIProvider()
