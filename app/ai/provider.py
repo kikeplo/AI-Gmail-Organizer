@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import random
+import time
 from dataclasses import dataclass
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -37,6 +39,9 @@ class AIProvider:
         self.provider = os.getenv("AI_PROVIDER", "").strip()
         self.model = os.getenv("OPENAI_MODEL", "").strip()
         self._resolved_model: str | None = self.model or None
+        self.fallback_models = [item.strip() for item in os.getenv("AI_FALLBACK_MODELS", "").split(",") if item.strip()]
+        self.retry_attempts = max(0, min(int(os.getenv("AI_TRANSIENT_RETRIES", "1")), 3))
+        self.retry_base_seconds = max(0.2, float(os.getenv("AI_RETRY_BASE_SECONDS", "0.8")))
 
     @property
     def configured(self) -> bool:
@@ -81,7 +86,17 @@ class AIProvider:
             detail = exc.read().decode("utf-8", errors="replace")
             raise AIProviderError(f"HTTP {exc.code}: {detail}") from exc
         except URLError as exc: raise AIProviderError(f"Connection error: {exc.reason}") from exc
+        except TimeoutError as exc: raise AIProviderError(f"Connection timeout: {exc}") from exc
         except json.JSONDecodeError as exc: raise AIProviderError("The AI provider returned invalid JSON.") from exc
+
+    @staticmethod
+    def _is_transient_error(error: str) -> bool:
+        text = error.casefold()
+        return any(marker in text for marker in ("http 408:", "http 429:", "http 500:", "http 502:", "http 503:", "http 504:"))
+
+    def _sleep_before_retry(self, attempt: int) -> None:
+        delay = self.retry_base_seconds * (2 ** attempt) + random.uniform(0.0, 0.25)
+        time.sleep(min(delay, 5.0))
 
     def list_models(self) -> list[str]:
         data = self._request("GET", f"{self._base()}/models")
@@ -98,6 +113,20 @@ class AIProvider:
         self._resolved_model = preferred[0] if preferred else models[0]
         return self._resolved_model
 
+    def _model_candidates(self, *, require_vision: bool = False) -> list[str]:
+        primary = self.resolve_model()
+        configured = [primary, *self.fallback_models]
+        if self._protocol() == "gemini":
+            configured.extend(["gemini-3.6-flash", "gemini-3.5-flash"])
+        result: list[str] = []
+        for model in configured:
+            if model in result:
+                continue
+            if require_vision and not self.capabilities(model).vision:
+                continue
+            result.append(model)
+        return result or [primary]
+
     def capabilities(self, model: str | None = None) -> AICapabilities:
         """Infer useful capabilities from provider/model metadata without requiring a paid probe."""
         selected = (model or self.model or self._resolved_model or "").lower()
@@ -108,8 +137,7 @@ class AIProvider:
         if "vision" in selected or "vl" in selected: vision = True
         return AICapabilities(text=True, vision=vision, structured_output=structured, tool_calling=tool_calling, model_listing=True)
 
-    def chat(self, user_text: str, system_text: str = "") -> str:
-        model = self.resolve_model()
+    def _chat_once(self, model: str, user_text: str, system_text: str) -> str:
         if self._protocol() == "anthropic":
             body = {"model": model, "max_tokens": 2048, "system": system_text or "You are a helpful desktop assistant.", "messages": [{"role": "user", "content": user_text}]}
             data = self._request("POST", f"{self._base()}/messages", body)
@@ -121,10 +149,24 @@ class AIProvider:
         if isinstance(content, list): content = "".join(part.get("text", "") for part in content if isinstance(part, dict))
         return str(content).strip()
 
-    def vision_json(self, prompt: str, image_base64: str) -> dict:
-        model = self.resolve_model()
+    def chat(self, user_text: str, system_text: str = "") -> str:
+        last_error: str | None = None
+        for model in self._model_candidates():
+            for attempt in range(self.retry_attempts + 1):
+                try:
+                    result = self._chat_once(model, user_text, system_text)
+                    self._resolved_model = model
+                    return result
+                except AIProviderError as exc:
+                    last_error = str(exc)
+                    if not self._is_transient_error(last_error) or attempt >= self.retry_attempts:
+                        break
+                    self._sleep_before_retry(attempt)
+        raise AIProviderError(self._friendly_transient_error(last_error))
+
+    def _vision_once(self, model: str, prompt: str, image_base64: str) -> dict:
         if not self.capabilities(model).vision:
-            raise AIProviderError("The selected AI model does not appear to support vision. Choose a vision-capable model or configure a local vision provider.")
+            raise AIProviderError("The selected AI model does not appear to support vision.")
         if self._protocol() == "anthropic":
             body = {"model": model, "max_tokens": 700, "system": "Return only valid JSON.", "messages": [{"role": "user", "content": [{"type": "text", "text": prompt}, {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": image_base64}}]}]}
             data = self._request("POST", f"{self._base()}/messages", body)
@@ -140,6 +182,21 @@ class AIProvider:
         if not isinstance(result, dict): raise AIProviderError("The vision model returned an invalid action format.")
         return result
 
+    def vision_json(self, prompt: str, image_base64: str) -> dict:
+        last_error: str | None = None
+        for model in self._model_candidates(require_vision=True):
+            for attempt in range(self.retry_attempts + 1):
+                try:
+                    result = self._vision_once(model, prompt, image_base64)
+                    self._resolved_model = model
+                    return result
+                except AIProviderError as exc:
+                    last_error = str(exc)
+                    if not self._is_transient_error(last_error) or attempt >= self.retry_attempts:
+                        break
+                    self._sleep_before_retry(attempt)
+        raise AIProviderError(self._friendly_transient_error(last_error))
+
     def classify_json(self, payload: list[dict], system_text: str) -> list[dict]:
         result = self.chat(json.dumps(payload), system_text)
         cleaned = result.replace("```json", "").replace("```", "").strip()
@@ -147,3 +204,9 @@ class AIProvider:
         except json.JSONDecodeError as exc: raise AIProviderError("The AI provider did not return valid JSON for email classification.") from exc
         if not isinstance(parsed, list): raise AIProviderError("The AI provider returned an unexpected classification format.")
         return parsed
+
+    @staticmethod
+    def _friendly_transient_error(error: str | None) -> str:
+        if error and any(marker in error.casefold() for marker in ("http 503:", "http 500:", "http 502:", "http 504:", "http 429:", "http 408:")):
+            return "The AI provider is temporarily overloaded or rate-limited. The request was retried and fallback model(s) were attempted, but they were unavailable. Please try again in a moment.\n\n" + error
+        return error or "The AI provider could not complete the request."
