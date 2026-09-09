@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import webbrowser
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import QByteArray, QThread, Signal
+from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
-    QMessageBox, QPushButton, QVBoxLayout,
+    QMessageBox, QPushButton, QToolButton, QVBoxLayout,
 )
 
 from app.ai.provider import AIProvider
@@ -95,10 +96,8 @@ class SetupDialog(QDialog):
 
         self.provider = QLineEdit(config.get("AI_PROVIDER", "")); self.provider.setPlaceholderText("Optional — Gemini, Anthropic, Ollama, OpenRouter, etc."); form.addRow("AI provider", self.provider)
 
-        self.api_key = QLineEdit(config.get("OPENAI_API_KEY", "")); self.api_key.setEchoMode(QLineEdit.Password); self.api_key.setPlaceholderText("Primary API key");
-        self.primary_eye = QPushButton("👁"); self.primary_eye.setCheckable(True); self.primary_eye.setFixedWidth(44); self.primary_eye.setToolTip("Show or hide API key")
-        self.primary_eye.toggled.connect(lambda visible: self._toggle_key_visibility(self.api_key, self.primary_eye, visible))
-        primary_row = QHBoxLayout(); primary_row.setContentsMargins(0, 0, 0, 0); primary_row.setSpacing(6); primary_row.addWidget(self.api_key, 1); primary_row.addWidget(self.primary_eye); form.addRow("Primary API key", primary_row)
+        self.api_key = QLineEdit(config.get("OPENAI_API_KEY", "")); self.api_key.setEchoMode(QLineEdit.Password); self.api_key.setPlaceholderText("Primary API key")
+        primary_row = QHBoxLayout(); primary_row.setContentsMargins(0, 0, 0, 0); primary_row.setSpacing(6); primary_row.addWidget(self.api_key, 1); primary_row.addWidget(self._make_eye_button(self.api_key)); form.addRow("Primary API key", primary_row)
 
         backup_text = config.get("OPENAI_API_KEYS", "")
         backup_values = [item.strip() for chunk in backup_text.splitlines() for item in chunk.split(",") if item.strip()]
@@ -107,19 +106,30 @@ class SetupDialog(QDialog):
             if legacy and legacy not in backup_values:
                 backup_values.append(legacy)
         self.backup_keys: list[QLineEdit] = []
+        self._backup_eye_buttons: list[QToolButton] = []
         backup_container = QVBoxLayout(); backup_container.setContentsMargins(0, 0, 0, 0); backup_container.setSpacing(6)
+        self.show_backups = QPushButton("Show backup API keys")
+        self.show_backups.setCheckable(True)
+        self.show_backups.setObjectName("showBackupsButton")
+        self.show_backups.setToolTip("Expand or collapse backup API keys")
+        self.show_backups.toggled.connect(self._toggle_backup_visibility)
+        backup_container.addWidget(self.show_backups)
+
+        self.backup_fields_container = QVBoxLayout(); self.backup_fields_container.setContentsMargins(0, 0, 0, 0); self.backup_fields_container.setSpacing(6)
         for index in range(5):
             field = QLineEdit(backup_values[index] if index < len(backup_values) else "")
             field.setEchoMode(QLineEdit.Password)
             field.setPlaceholderText(f"Backup API key {index + 1} — optional")
             field.setClearButtonEnabled(True)
-            eye = QPushButton("👁"); eye.setCheckable(True); eye.setFixedWidth(44); eye.setToolTip("Show or hide API key")
-            eye.toggled.connect(lambda visible, target=field, button=eye: self._toggle_key_visibility(target, button, visible))
+            eye = self._make_eye_button(field)
+            self.backup_keys.append(field); self._backup_eye_buttons.append(eye)
             row = QHBoxLayout(); row.setContentsMargins(0, 0, 0, 0); row.setSpacing(6); row.addWidget(field, 1); row.addWidget(eye)
-            self.backup_keys.append(field)
-            backup_container.addLayout(row)
-        backup_hint = QLabel("Use the backups when the primary key is unavailable, rate-limited, or over quota. Keys stay in the app's local settings.")
-        backup_hint.setWordWrap(True); backup_hint.setObjectName("backupHint"); backup_container.addWidget(backup_hint)
+            row_widget = QVBoxLayout(); row_widget.setContentsMargins(0, 0, 0, 0); row_widget.addLayout(row)
+            self.backup_fields_container.addLayout(row_widget)
+        backup_hint = QLabel("Backup keys are used automatically when the primary key is unavailable, rate-limited, or over quota. Keys stay in the app's local settings.")
+        backup_hint.setWordWrap(True); backup_hint.setObjectName("backupHint"); self.backup_fields_container.addWidget(backup_hint)
+        backup_container.addLayout(self.backup_fields_container)
+        self._set_backup_fields_visible(False)
         form.addRow("Backup API keys", backup_container)
 
         self.base_url = QLineEdit(config.get("OPENAI_BASE_URL", "")); self.base_url.setPlaceholderText("API endpoint/base URL"); form.addRow("API base URL", self.base_url)
@@ -136,18 +146,58 @@ class SetupDialog(QDialog):
             QDialog { background: #121620; color: #F1F5F9; } QLabel { color: #E3E8F0; }
             QLineEdit, QComboBox { color: #F7F8FA; background: #202738; border: 1px solid #3A4356; border-radius: 8px; padding: 9px; }
             QComboBox QAbstractItemView { color: #F7F8FA; background: #202738; selection-background-color: #35415B; }
-            QPushButton { color: #F7F8FA; background: #2A3346; border: 1px solid #46516A; border-radius: 8px; padding: 9px 14px; }
-            QPushButton:hover { background: #35415B; }
-            QPushButton[checkable="true"] { min-height: 34px; padding: 6px; }
+            QPushButton, QToolButton { color: #F7F8FA; background: #2A3346; border: 1px solid #46516A; border-radius: 8px; padding: 9px 14px; }
+            QPushButton:hover, QToolButton:hover { background: #35415B; }
+            QToolButton#apiKeyEye { padding: 6px; min-width: 38px; max-width: 38px; min-height: 34px; max-height: 34px; }
+            QPushButton#showBackupsButton { text-align: left; background: transparent; border: none; color: #B7C3D6; padding: 5px 2px; }
+            QPushButton#showBackupsButton:hover { color: #FFFFFF; background: transparent; }
             #settingsNote, #backupHint { color: #AAB4C4; background: transparent; border: none; }
             #capabilityBox { color: #EAF0F8; background: #1A2231; border: 1px solid #354057; border-radius: 10px; padding: 12px; }
         """)
 
     @staticmethod
-    def _toggle_key_visibility(field: QLineEdit, button: QPushButton, visible: bool) -> None:
+    def _eye_icon() -> QIcon:
+        svg = b'''<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.2 12s3.4-6 9.8-6 9.8 6 9.8 6-3.4 6-9.8 6-9.8-6-9.8-6Z"/><circle cx="12" cy="12" r="2.6"/></svg>'''
+        pixmap = QPixmap(); pixmap.loadFromData(QByteArray(svg), "SVG")
+        return QIcon(pixmap)
+
+    @classmethod
+    def _make_eye_button(cls, field: QLineEdit) -> QToolButton:
+        button = QToolButton(); button.setObjectName("apiKeyEye"); button.setCheckable(True); button.setIcon(cls._eye_icon()); button.setIconSize(button.iconSize()); button.setAutoRaise(False); button.setToolTip("Show API key")
+        button.toggled.connect(lambda visible, target=field, eye=button: cls._toggle_key_visibility(target, eye, visible))
+        return button
+
+    @staticmethod
+    def _toggle_key_visibility(field: QLineEdit, button: QToolButton, visible: bool) -> None:
         field.setEchoMode(QLineEdit.Normal if visible else QLineEdit.Password)
-        button.setText("🙈" if visible else "👁")
         button.setToolTip("Hide API key" if visible else "Show API key")
+
+    def _set_backup_fields_visible(self, visible: bool) -> None:
+        for index in range(self.backup_fields_container.count()):
+            item = self.backup_fields_container.itemAt(index)
+            if item is None:
+                continue
+            widget = item.widget()
+            if widget is not None:
+                widget.setVisible(visible)
+            else:
+                self._set_layout_item_visible(item, visible)
+
+    @staticmethod
+    def _set_layout_item_visible(item, visible: bool) -> None:
+        layout = item.layout()
+        if layout is None:
+            return
+        for index in range(layout.count()):
+            child = layout.itemAt(index)
+            if child.widget() is not None:
+                child.widget().setVisible(visible)
+            else:
+                SetupDialog._set_layout_item_visible(child, visible)
+
+    def _toggle_backup_visibility(self, visible: bool) -> None:
+        self._set_backup_fields_visible(visible)
+        self.show_backups.setText("Hide backup API keys" if visible else "Show backup API keys")
 
     def _provider_for_form(self) -> AIProvider:
         provider = AIProvider()
@@ -176,8 +226,7 @@ class SetupDialog(QDialog):
             index = self.model.findText(current); self.model.setCurrentIndex(index) if index >= 0 else self.model.setCurrentText(current)
         self.model.setEnabled(True); self._check_capabilities()
 
-    def _models_failed(self, message: str) -> None:
-        self.model.setEnabled(True); QMessageBox.warning(self, "Could not load models", message)
+    def _models_failed(self, message: str) -> None: self.model.setEnabled(True); QMessageBox.warning(self, "Could not load models", message)
 
     def _check_capabilities(self) -> None:
         try:
