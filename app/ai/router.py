@@ -43,14 +43,14 @@ class RouterResponse:
 
 
 class SmartAIRouter:
-    """Select local/cloud AI, handle quota cooldowns, failover, and provider health metrics."""
+    """Prefer local AI for normal work, then transparently escalate to cloud AI."""
 
     def __init__(self, cloud_factory: Callable[[], AIProvider] = AIProvider,
                  local_factory: Callable[[], LocalAIEngine] = LocalAIEngine) -> None:
         self.cloud = cloud_factory()
         self.local = local_factory()
-        self.preference = os.getenv("AI_ROUTING_MODE", "balanced").strip().lower() or "balanced"
-        self.priority = [x.strip().lower() for x in os.getenv("AI_PROVIDER_PRIORITY", "cloud,local").split(",") if x.strip()]
+        self.preference = os.getenv("AI_ROUTING_MODE", "local-first").strip().lower() or "local-first"
+        self.priority = [x.strip().lower() for x in os.getenv("AI_PROVIDER_PRIORITY", "local,cloud").split(",") if x.strip()]
         self.cooldown_default = max(15, int(os.getenv("AI_QUOTA_COOLDOWN_SECONDS", "60")))
         self.states = {"cloud": ProviderState("Cloud AI"), "local": ProviderState("Local AI")}
 
@@ -62,37 +62,52 @@ class SmartAIRouter:
 
     def status(self) -> list[dict[str, str | int | bool]]:
         rows = []
+        names = {"cloud": self.cloud.provider or self.cloud._protocol(), "local": "Local AI"}
         for key in ("cloud", "local"):
             state = self.states[key]
             configured = self.cloud.configured if key == "cloud" else self.local.available()
-            rows.append({"provider": key, "configured": configured, "available": configured and state.available,
+            rows.append({"provider": names[key], "configured": configured, "available": configured and state.available,
                           "cooldown_seconds": state.cooldown_seconds, "last_status": state.last_status,
                           "last_error": state.last_error, "requests": state.requests,
                           "successes": state.successes, "failures": state.failures})
         return rows
 
     def chat(self, prompt: str, system: str = "") -> RouterResponse:
-        if self._local_first(prompt) and self.local.available():
-            local = self._call_local(prompt, system)
-            if local is not None: return local
+        """Run local-first when enabled; any local failure immediately falls through to cloud."""
         last_message = "No configured AI provider is available."
-        for key in self._ordered_candidates():
+        attempted_local = False
+        if self._local_first(prompt) and self.local.available():
+            attempted_local = True
+            local = self._call_local(prompt, system)
+            if local is not None:
+                return local
+            last_message = self.states["local"].last_error or last_message
+
+        for key in self._ordered_candidates(skip_local=attempted_local):
             state = self.states[key]
-            if not state.available: continue
+            if not state.available:
+                continue
             try:
                 state.requests += 1
                 if key == "cloud":
-                    if not self.cloud.configured: continue
+                    if not self.cloud.configured:
+                        continue
                     text = self.cloud.chat(prompt, system)
                 else:
-                    if not self.local.available(): continue
+                    if not self.local.available():
+                        continue
                     text = self.local.chat(prompt, system)
                 self._success(key)
-                return RouterResponse(text, key, key != self._preferred_provider(), self._human_provider_message(key))
+                fallback = attempted_local and key == "cloud"
+                message = "Local AI was unavailable, so Cloud AI handled this request." if fallback else self._human_provider_message(key)
+                return RouterResponse(text, key, fallback, message)
             except (AIProviderError, LocalAIError) as exc:
                 last_message = str(exc)
-                if self._is_quota_error(last_message) and key == "cloud": self._put_on_cooldown(key, last_message)
-                else: self._record_failure(key, last_message)
+                if self._is_quota_error(last_message) and key == "cloud":
+                    self._put_on_cooldown(key, last_message)
+                else:
+                    self._record_failure(key, last_message)
+
         raise AIProviderError(last_message)
 
     def vision_json(self, prompt: str, image_base64: str) -> dict:
@@ -100,14 +115,17 @@ class SmartAIRouter:
         last_message = "No configured vision-capable AI provider is available."
         for key in self._ordered_candidates():
             state = self.states[key]
-            if not state.available: continue
+            if not state.available:
+                continue
             try:
                 state.requests += 1
                 if key == "cloud":
-                    if not self.cloud.configured: continue
+                    if not self.cloud.configured:
+                        continue
                     result = self.cloud.vision_json(prompt, image_base64)
                 else:
-                    if not self.local.available(): continue
+                    if not self.local.available():
+                        continue
                     from PIL import Image
                     image = Image.open(BytesIO(base64.b64decode(image_base64)))
                     result = self.local.vision_json(prompt, image)
@@ -115,16 +133,21 @@ class SmartAIRouter:
                 return result
             except (AIProviderError, LocalAIError) as exc:
                 last_message = str(exc)
-                if self._is_quota_error(last_message) and key == "cloud": self._put_on_cooldown(key, last_message)
-                else: self._record_failure(key, last_message)
+                if self._is_quota_error(last_message) and key == "cloud":
+                    self._put_on_cooldown(key, last_message)
+                else:
+                    self._record_failure(key, last_message)
         raise AIProviderError(last_message)
 
     def classify_json(self, payload: list[dict], system: str = "") -> list[dict]:
         result = self.chat(json.dumps(payload), system)
         cleaned = result.text.replace("```json", "").replace("```", "").strip()
-        try: parsed = json.loads(cleaned)
-        except json.JSONDecodeError as exc: raise AIProviderError("The AI provider did not return valid JSON for classification.") from exc
-        if not isinstance(parsed, list): raise AIProviderError("The AI provider returned an unexpected classification format.")
+        try:
+            parsed = json.loads(cleaned)
+        except json.JSONDecodeError as exc:
+            raise AIProviderError("The AI provider did not return valid JSON for classification.") from exc
+        if not isinstance(parsed, list):
+            raise AIProviderError("The AI provider returned an unexpected classification format.")
         return parsed
 
     def _call_local(self, prompt: str, system: str) -> RouterResponse | None:
@@ -132,26 +155,29 @@ class SmartAIRouter:
             self.states["local"].requests += 1
             text = self.local.chat(prompt, system)
             self._success("local")
-            return RouterResponse(text, "local", False, "Handled locally for speed and lower cloud usage.")
+            return RouterResponse(text, "local", False, "Handled by the local AI for privacy and speed.")
         except LocalAIError as exc:
             self._record_failure("local", str(exc))
             return None
 
-    def _ordered_candidates(self) -> list[str]:
+    def _ordered_candidates(self, *, skip_local: bool = False) -> list[str]:
         configured = set(self.configured_providers())
         preferred = self._preferred_provider()
         result: list[str] = []
-        if preferred in configured: result.append(preferred)
+        if preferred in configured and not (skip_local and preferred == "local"):
+            result.append(preferred)
         for key in self.priority:
-            if key in configured and key not in result: result.append(key)
-        for key in ("cloud", "local"):
-            if key in configured and key not in result: result.append(key)
+            if key in configured and key not in result and not (skip_local and key == "local"):
+                result.append(key)
+        for key in ("local", "cloud"):
+            if key in configured and key not in result and not (skip_local and key == "local"):
+                result.append(key)
         return result
 
     def _preferred_provider(self) -> str:
         if self.preference == "local-first": return "local"
         if self.preference == "cloud-first": return "cloud"
-        return self.priority[0] if self.priority else "cloud"
+        return self.priority[0] if self.priority else "local"
 
     def _local_first(self, prompt: str) -> bool:
         text = prompt.casefold()
