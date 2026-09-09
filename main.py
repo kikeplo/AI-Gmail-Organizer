@@ -9,6 +9,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
+from app.agent.bulk_gmail import install_bulk_gmail
 from app.ui.overlay import OverlayWindow
 from app.ui.setup_dialog import SetupDialog
 
@@ -76,10 +77,8 @@ def main() -> int:
         setup.exec()
         load_dotenv(config_file, override=True)
 
-    # Desktop consent is requested only when the user actually starts a visual
-    # task. This avoids showing a permission dialog on every launch and keeps
-    # normal Gmail/AI usage independent from desktop-control permissions.
     window = OverlayWindow()
+    install_bulk_gmail(window._agent)
     configure_desktop_window(window)
     return app.exec()
 
