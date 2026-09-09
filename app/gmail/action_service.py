@@ -45,9 +45,7 @@ class GmailActionService:
 
         self.client._require_connection()
         if action.action == "archive":
-            for message_id in action.message_ids:
-                self.client.archive_message(message_id)
-            return len(action.message_ids)
+            return self.client.batch_archive_messages(list(action.message_ids))
 
         if action.action == "label":
             if not action.label_name:
