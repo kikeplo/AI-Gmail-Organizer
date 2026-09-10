@@ -37,6 +37,7 @@ class OverlayWindow(QMainWindow):
         self._pending_action = None
         self._thread: QThread | None = None
         self._worker: CommandWorker | None = None
+        self._settings_dialog: SetupDialog | None = None
         self._build_ui()
         self._agent.windows.set_own_window(int(self.winId()))
         self._foreground_timer = QTimer(self)
@@ -209,11 +210,44 @@ class OverlayWindow(QMainWindow):
         self._worker = None; self._thread = None
 
     def _open_settings(self) -> None:
-        dialog = SetupDialog(self)
-        if dialog.exec() == QDialog.Accepted:
-            from dotenv import load_dotenv
-            from app.config.user_settings import ENV_FILE
-            load_dotenv(ENV_FILE, override=True); self._agent = CommandAgent(); self._agent.windows.set_own_window(int(self.winId())); self._add_message("assistant", "Settings updated. The new AI provider is active now — no restart required.")
+        if self._settings_dialog is not None:
+            try:
+                self._settings_dialog.raise_()
+                self._settings_dialog.activateWindow()
+                return
+            except RuntimeError:
+                self._settings_dialog = None
+        try:
+            dialog = SetupDialog(self)
+            self._settings_dialog = dialog
+            dialog.setModal(True)
+
+            screen = self.screen() or self.windowHandle().screen() if self.windowHandle() else None
+            if screen is None:
+                from PySide6.QtGui import QGuiApplication
+                screen = QGuiApplication.primaryScreen()
+            if screen is not None:
+                available = screen.availableGeometry()
+                width = min(max(760, available.width() - 120), 860)
+                height = min(max(520, available.height() - 100), 760)
+                dialog.resize(width, height)
+                dialog.setMinimumSize(min(680, width), min(480, height))
+                frame = dialog.frameGeometry()
+                frame.moveCenter(available.center())
+                dialog.move(frame.topLeft())
+
+            result = dialog.exec()
+            if result == QDialog.Accepted:
+                from dotenv import load_dotenv
+                from app.config.user_settings import ENV_FILE
+                load_dotenv(ENV_FILE, override=True)
+                self._agent = CommandAgent()
+                self._agent.windows.set_own_window(int(self.winId()))
+                self._add_message("assistant", "Settings updated. The new AI provider and local AI configuration are active now — no restart required.")
+        except Exception as exc:
+            QMessageBox.critical(self, "Settings could not be opened", f"The Settings window could not be opened.\n\n{exc}")
+        finally:
+            self._settings_dialog = None
         self.history_view.store = self._memory; self.usage_view.store = self._memory
 
     def mousePressEvent(self, event) -> None:
