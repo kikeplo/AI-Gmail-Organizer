@@ -35,9 +35,9 @@ class OverlayWindow(QMainWindow):
         self._agent = CommandAgent()
         self._memory = MemoryStore()
         self._pending_action = None
-        self._thread: QThread | None = None
-        self._worker: CommandWorker | None = None
-        self._settings_dialog: QDialog | None = None
+        self._thread = None
+        self._worker = None
+        self._settings_dialog = None
         self._build_ui()
         self._agent.windows.set_own_window(int(self.winId()))
         self._foreground_timer = QTimer(self)
@@ -122,146 +122,79 @@ class OverlayWindow(QMainWindow):
         self.messages = QVBoxLayout(); self.messages.setSpacing(10); self.messages.addStretch()
         host = QWidget(); host.setLayout(self.messages); self.scroll = QScrollArea(); self.scroll.setWidget(host); self.scroll.setWidgetResizable(True); self.scroll.setFrameShape(QFrame.NoFrame); self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff); self.scroll.setObjectName("messagesScroll"); layout.addWidget(self.scroll, 1)
         self.hint = QLabel("Gmail changes require confirmation. Desktop actions are performed on your local Windows session. Local memories stay on this device."); self.hint.setObjectName("hint"); layout.addWidget(self.hint)
-        control_row = QHBoxLayout()
-        self.pause_button = QPushButton("⏸ Pause"); self.pause_button.setObjectName("pauseButton"); self.pause_button.setEnabled(False); self.pause_button.clicked.connect(self._toggle_pause)
-        self.stop_button = QPushButton("⛔ Stop"); self.stop_button.setObjectName("stopButton"); self.stop_button.setEnabled(False); self.stop_button.clicked.connect(self._stop_task)
-        control_row.addWidget(self.pause_button); control_row.addWidget(self.stop_button); control_row.addStretch(); layout.addLayout(control_row)
-        input_row = QHBoxLayout(); self.command_input = QLineEdit(); self.command_input.setPlaceholderText("Ask me to work with Gmail, Windows, your screen, or your memories…"); self.command_input.setClearButtonEnabled(True)
-        self.send_button = QPushButton("Send"); self.send_button.setObjectName("sendButton"); self.send_button.setMinimumWidth(94); self.send_button.clicked.connect(self._on_send); self.command_input.returnPressed.connect(self._on_send); input_row.addWidget(self.command_input); input_row.addWidget(self.send_button); layout.addLayout(input_row)
+        control_row = QHBoxLayout(); self.pause_button = QPushButton("⏸ Pause"); self.pause_button.setObjectName("pauseButton"); self.pause_button.setEnabled(False); self.pause_button.clicked.connect(self._toggle_pause); self.stop_button = QPushButton("⛔ Stop"); self.stop_button.setObjectName("stopButton"); self.stop_button.setEnabled(False); self.stop_button.clicked.connect(self._stop_task); control_row.addWidget(self.pause_button); control_row.addWidget(self.stop_button); control_row.addStretch(); layout.addLayout(control_row)
+        input_row = QHBoxLayout(); self.command_input = QLineEdit(); self.command_input.setPlaceholderText("Ask me to work with Gmail, Windows, your screen, or your memories…"); self.command_input.setClearButtonEnabled(True); self.send_button = QPushButton("Send"); self.send_button.setObjectName("sendButton"); self.send_button.setMinimumWidth(94); self.send_button.clicked.connect(self._on_send); self.command_input.returnPressed.connect(self._on_send); input_row.addWidget(self.command_input); input_row.addWidget(self.send_button); layout.addLayout(input_row)
         return page
 
     @staticmethod
     def _clean_ai_text(text: str) -> str:
-        text = text.replace("\r\n", "\n").replace("\r", "\n")
-        text = re.sub(r"^\s*([-*_])(?:\s*\1){2,}\s*$", "", text, flags=re.MULTILINE)
-        text = re.sub(r"^\s*#{1,6}\s*", "", text, flags=re.MULTILINE)
-        text = re.sub(r"^\s*[-*+]\s+", "• ", text, flags=re.MULTILINE)
-        text = text.replace("**", "").replace("__", "")
-        text = re.sub(r"(?<!\w)\*([^\n*]+)\*(?!\w)", r"\1", text)
-        text = re.sub(r"(?<!\w)_([^\n_]+)_(?!\w)", r"\1", text)
-        text = text.replace("```", "").replace("`", "")
-        text = re.sub(r"\n{3,}", "\n\n", text)
-        return text.strip()
-
-    def _refresh_dashboard(self, index: int) -> None:
-        if index == 1: self.history_view.store = self._memory; self.history_view.refresh()
-        elif index == 2: self.usage_view.store = self._memory; self.usage_view.refresh()
-
-    def _add_message(self, role: str, text: str) -> None:
-        label = QLabel(self._clean_ai_text(text) if role == "assistant" else text)
-        label.setObjectName("messageUser" if role == "user" else "messageAssistant"); label.setWordWrap(True); label.setTextInteractionFlags(Qt.TextSelectableByMouse); label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum); self.messages.insertWidget(self.messages.count() - 1, label); self.scroll.verticalScrollBar().setValue(self.scroll.verticalScrollBar().maximum())
-
-    def _submit(self, command: str) -> None: self.tabs.setCurrentIndex(0); self.command_input.setText(command); self._on_send()
-
-    def _needs_visual_access(self, command: str) -> bool:
-        lowered = command.casefold()
-        return self._agent._looks_like_gmail_ui_task(lowered) or self._agent._looks_like_visual_task(lowered)
-
-    def _request_visual_access(self) -> bool:
-        access = AccessManager()
-        if access.is_allowed("screen") and access.is_allowed("input"):
-            return True
-        dialog = DesktopAccessDialog(access, parent=self)
-        dialog.setWindowModality(Qt.ApplicationModal); dialog.setModal(True); dialog.raise_(); dialog.activateWindow()
-        if dialog.exec() == QDialog.Accepted and access.is_allowed("screen") and access.is_allowed("input"):
-            self._add_message("assistant", "Screen and mouse/keyboard access enabled. Starting the visual task…")
-            return True
-        self._add_message("assistant", "Visual task cancelled because screen and mouse/keyboard access was not enabled."); return False
-
-    def _on_send(self) -> None:
-        command = self.command_input.text().strip()
+        text=text.replace("\r\n","\n").replace("\r","\n"); text=re.sub(r"^\s*([-*_])(?:\s*\1){2,}\s*$","",text,flags=re.MULTILINE); text=re.sub(r"^\s*#{1,6}\s*","",text,flags=re.MULTILINE); text=re.sub(r"^\s*[-*+]\s+","• ",text,flags=re.MULTILINE); text=text.replace("**","").replace("__",""); text=re.sub(r"(?<!\w)\*([^\n*]+)\*(?!\w)",r"\1",text); text=re.sub(r"(?<!\w)_([^\n_]+)_(?!\w)",r"\1",text); text=text.replace("```","").replace("`",""); text=re.sub(r"\n{3,}","\n\n",text); return text.strip()
+    def _refresh_dashboard(self,index:int)->None:
+        if index==1: self.history_view.store=self._memory; self.history_view.refresh()
+        elif index==2: self.usage_view.store=self._memory; self.usage_view.refresh()
+    def _add_message(self,role:str,text:str)->None:
+        label=QLabel(self._clean_ai_text(text) if role=="assistant" else text); label.setObjectName("messageUser" if role=="user" else "messageAssistant"); label.setWordWrap(True); label.setTextInteractionFlags(Qt.TextSelectableByMouse); label.setSizePolicy(QSizePolicy.Expanding,QSizePolicy.Minimum); self.messages.insertWidget(self.messages.count()-1,label); self.scroll.verticalScrollBar().setValue(self.scroll.verticalScrollBar().maximum())
+    def _submit(self,command:str)->None: self.tabs.setCurrentIndex(0); self.command_input.setText(command); self._on_send()
+    def _needs_visual_access(self,command:str)->bool:
+        lowered=command.casefold(); return self._agent._looks_like_gmail_ui_task(lowered) or self._agent._looks_like_visual_task(lowered)
+    def _request_visual_access(self)->bool:
+        access=AccessManager()
+        if access.is_allowed("screen") and access.is_allowed("input"): return True
+        dialog=DesktopAccessDialog(access,parent=self); dialog.setWindowModality(Qt.ApplicationModal); dialog.setModal(True); dialog.raise_(); dialog.activateWindow()
+        if dialog.exec()==QDialog.Accepted and access.is_allowed("screen") and access.is_allowed("input"): self._add_message("assistant","Screen and mouse/keyboard access enabled. Starting the visual task…"); return True
+        self._add_message("assistant","Visual task cancelled because screen and mouse/keyboard access was not enabled."); return False
+    def _on_send(self)->None:
+        command=self.command_input.text().strip()
         if not command or self._thread is not None: return
         if self._needs_visual_access(command) and not self._request_visual_access(): return
-        self._add_message("user", command); self.command_input.clear(); self.send_button.setEnabled(False); self.send_button.setText("Working…"); self.status.setText("● Working"); self.hint.setText("Working in the background. You can pause or stop a visual task at any time."); self.pause_button.setEnabled(True); self.stop_button.setEnabled(True)
-        self._thread = QThread(self); self._worker = CommandWorker(self._agent, command); self._worker.moveToThread(self._thread); self._thread.started.connect(self._worker.run); self._worker.status.connect(self._on_worker_status); self._worker.finished.connect(self._on_worker_finished); self._worker.failed.connect(self._on_worker_failed); self._worker.finished.connect(self._thread.quit); self._worker.failed.connect(self._thread.quit); self._thread.finished.connect(self._cleanup_worker); self._thread.start()
-
-    def _on_worker_status(self, message: str) -> None: self.status.setText("● " + message); self.hint.setText(message)
-
-    def _toggle_pause(self) -> None:
+        self._add_message("user",command); self.command_input.clear(); self.send_button.setEnabled(False); self.send_button.setText("Working…"); self.status.setText("● Working"); self.hint.setText("Working in the background. You can pause or stop a visual task at any time."); self.pause_button.setEnabled(True); self.stop_button.setEnabled(True)
+        self._thread=QThread(self); self._worker=CommandWorker(self._agent,command); self._worker.moveToThread(self._thread); self._thread.started.connect(self._worker.run); self._worker.status.connect(self._on_worker_status); self._worker.finished.connect(self._on_worker_finished); self._worker.failed.connect(self._on_worker_failed); self._worker.finished.connect(self._thread.quit); self._worker.failed.connect(self._thread.quit); self._thread.finished.connect(self._cleanup_worker); self._thread.start()
+    def _on_worker_status(self,message:str)->None: self.status.setText("● "+message); self.hint.setText(message)
+    def _toggle_pause(self)->None:
         if self._thread is None: return
-        if self._agent.vision.pause_requested:
-            self._agent.resume_task(); self.pause_button.setText("⏸ Pause"); self.status.setText("● Working"); self.hint.setText("Task resumed.")
-        else:
-            self._agent.pause_task(); self.pause_button.setText("▶ Resume"); self.status.setText("● Paused"); self.hint.setText("Task paused. Resume when you are ready.")
-
-    def _stop_task(self) -> None:
+        if self._agent.vision.pause_requested: self._agent.resume_task(); self.pause_button.setText("⏸ Pause"); self.status.setText("● Working"); self.hint.setText("Task resumed.")
+        else: self._agent.pause_task(); self.pause_button.setText("▶ Resume"); self.status.setText("● Paused"); self.hint.setText("Task paused. Resume when you are ready.")
+    def _stop_task(self)->None:
         if self._thread is None: return
         self._agent.stop_task(); self.stop_button.setEnabled(False); self.pause_button.setEnabled(False); self.status.setText("● Stopping…"); self.hint.setText("Stopping the current task…")
-
-    def _on_worker_finished(self, response) -> None:
-        self._add_message("assistant", response.text); self._pending_action = response.pending_action
-        if response.mode == "confirmation" and self._pending_action is not None:
-            reply = QMessageBox.question(self, "Confirm action", response.text, QMessageBox.Yes | QMessageBox.No, QMessageBox.No); follow_up = self._agent.confirm_action(self._pending_action, reply == QMessageBox.Yes); self._add_message("assistant", follow_up.text); self._pending_action = None
+    def _on_worker_finished(self,response)->None:
+        self._add_message("assistant",response.text); self._pending_action=response.pending_action
+        if response.mode=="confirmation" and self._pending_action is not None:
+            reply=QMessageBox.question(self,"Confirm action",response.text,QMessageBox.Yes|QMessageBox.No,QMessageBox.No); follow_up=self._agent.confirm_action(self._pending_action,reply==QMessageBox.Yes); self._add_message("assistant",follow_up.text); self._pending_action=None
         self._set_ready_state()
-
-    def _on_worker_failed(self, message: str) -> None: self._add_message("assistant", f"The command could not be completed.\n\n{message}"); self._set_ready_state()
-
-    def _set_ready_state(self) -> None:
-        self.send_button.setEnabled(True); self.send_button.setText("Send"); self.status.setText("● Ready"); self.hint.setText("Gmail changes require confirmation. Desktop actions are performed on your local Windows session. Local memories stay on this device."); self.pause_button.setEnabled(False); self.stop_button.setEnabled(False); self.pause_button.setText("⏸ Pause")
-
-    def _cleanup_worker(self) -> None:
+    def _on_worker_failed(self,message:str)->None: self._add_message("assistant",f"The command could not be completed.\n\n{message}"); self._set_ready_state()
+    def _set_ready_state(self)->None: self.send_button.setEnabled(True); self.send_button.setText("Send"); self.status.setText("● Ready"); self.hint.setText("Gmail changes require confirmation. Desktop actions are performed on your local Windows session. Local memories stay on this device."); self.pause_button.setEnabled(False); self.stop_button.setEnabled(False); self.pause_button.setText("⏸ Pause")
+    def _cleanup_worker(self)->None:
         if self._worker is not None: self._worker.deleteLater()
         if self._thread is not None: self._thread.deleteLater()
-        self._worker = None; self._thread = None
+        self._worker=None; self._thread=None
 
     def _open_settings(self) -> None:
         if self._settings_dialog is not None:
             try:
                 self._settings_dialog.raise_(); self._settings_dialog.activateWindow(); return
-            except RuntimeError:
-                self._settings_dialog = None
+            except RuntimeError: self._settings_dialog=None
         try:
-            source = SetupDialog(self)
-            wrapper = QDialog(self)
-            wrapper.setWindowTitle("AI Gmail Organizer — Settings")
-            wrapper.setModal(True)
-            wrapper.setObjectName("settingsWrapper")
-            wrapper_layout = QVBoxLayout(wrapper); wrapper_layout.setContentsMargins(0, 0, 0, 0)
-            scroll = QScrollArea(wrapper); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.NoFrame); scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff); scroll.setObjectName("settingsScroll")
-            source.setParent(wrapper); source.setWindowFlags(Qt.Widget); source.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
-            scroll.setWidget(source); wrapper_layout.addWidget(scroll)
-            source.accepted.connect(wrapper.accept); source.rejected.connect(wrapper.reject)
-            wrapper.setStyleSheet("""
-                QDialog#settingsWrapper { background: #121620; }
-                QScrollArea#settingsScroll { background: #121620; border: none; }
-                QScrollArea#settingsScroll > QWidget { background: #121620; }
-                QScrollBar:vertical { width: 8px; background: transparent; }
-                QScrollBar::handle:vertical { background: #46516A; border-radius: 4px; min-height: 36px; }
-                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
-            """)
-            self._settings_dialog = wrapper
-
-            from PySide6.QtGui import QGuiApplication
-            screen = self.screen() or QGuiApplication.primaryScreen()
+            dialog=SetupDialog(self)
+            self._settings_dialog=dialog
+            screen=self.screen()
             if screen is not None:
-                available = screen.availableGeometry()
-                width = min(max(700, available.width() - 120), 860)
-                height = min(max(520, available.height() - 100), 720)
-                wrapper.setMinimumSize(min(680, width), min(480, height))
-                wrapper.resize(width, height)
-                frame = wrapper.frameGeometry(); frame.moveCenter(available.center()); wrapper.move(frame.topLeft())
-            else:
-                wrapper.resize(820, 680)
-
-            result = wrapper.exec()
-            if result == QDialog.Accepted:
+                available=screen.availableGeometry(); width=min(820,max(620,available.width()-80)); height=min(760,max(480,available.height()-80)); dialog.resize(width,height); frame=dialog.frameGeometry(); frame.moveCenter(available.center()); dialog.move(frame.topLeft())
+            dialog.setWindowModality(Qt.ApplicationModal); dialog.raise_(); dialog.activateWindow()
+            result=dialog.exec()
+            if result==QDialog.Accepted:
                 from dotenv import load_dotenv
                 from app.config.user_settings import ENV_FILE
-                load_dotenv(ENV_FILE, override=True)
-                self._agent = CommandAgent(); self._agent.windows.set_own_window(int(self.winId()))
-                self._add_message("assistant", "Settings updated. The new AI provider and local AI configuration are active now — no restart required.")
+                load_dotenv(ENV_FILE,override=True); self._agent=CommandAgent(); self._agent.windows.set_own_window(int(self.winId())); self._add_message("assistant","Settings updated. The new AI provider and local AI configuration are active now — no restart required.")
         except Exception as exc:
-            QMessageBox.critical(self, "Settings could not be opened", f"The Settings window could not be opened.\n\n{exc}")
-        finally:
-            self._settings_dialog = None
-        self.history_view.store = self._memory; self.usage_view.store = self._memory
+            QMessageBox.critical(self,"Settings could not be opened",f"The Settings window could not be opened.\n\n{exc}")
+        finally: self._settings_dialog=None
+        self.history_view.store=self._memory; self.usage_view.store=self._memory
 
-    def mousePressEvent(self, event) -> None:
-        if event.button() == Qt.LeftButton: self._drag_position = event.globalPosition().toPoint() - self.frameGeometry().topLeft(); event.accept()
+    def mousePressEvent(self,event)->None:
+        if event.button()==Qt.LeftButton: self._drag_position=event.globalPosition().toPoint()-self.frameGeometry().topLeft(); event.accept()
         else: super().mousePressEvent(event)
-
-    def mouseMoveEvent(self, event) -> None:
-        if self._drag_position is not None and event.buttons() & Qt.LeftButton: self.move(event.globalPosition().toPoint() - self._drag_position); event.accept()
+    def mouseMoveEvent(self,event)->None:
+        if self._drag_position is not None and event.buttons() & Qt.LeftButton: self.move(event.globalPosition().toPoint()-self._drag_position); event.accept()
         else: super().mouseMoveEvent(event)
-
-    def mouseReleaseEvent(self, event) -> None: self._drag_position = None; super().mouseReleaseEvent(event)
+    def mouseReleaseEvent(self,event)->None: self._drag_position=None; super().mouseReleaseEvent(event)
