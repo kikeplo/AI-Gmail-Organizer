@@ -37,7 +37,7 @@ class OverlayWindow(QMainWindow):
         self._pending_action = None
         self._thread: QThread | None = None
         self._worker: CommandWorker | None = None
-        self._settings_dialog: SetupDialog | None = None
+        self._settings_dialog: QDialog | None = None
         self._build_ui()
         self._agent.windows.set_own_window(int(self.winId()))
         self._foreground_timer = QTimer(self)
@@ -162,21 +162,16 @@ class OverlayWindow(QMainWindow):
         if access.is_allowed("screen") and access.is_allowed("input"):
             return True
         dialog = DesktopAccessDialog(access, parent=self)
-        dialog.setWindowModality(Qt.ApplicationModal)
-        dialog.setModal(True)
-        dialog.raise_()
-        dialog.activateWindow()
+        dialog.setWindowModality(Qt.ApplicationModal); dialog.setModal(True); dialog.raise_(); dialog.activateWindow()
         if dialog.exec() == QDialog.Accepted and access.is_allowed("screen") and access.is_allowed("input"):
             self._add_message("assistant", "Screen and mouse/keyboard access enabled. Starting the visual task…")
             return True
-        self._add_message("assistant", "Visual task cancelled because screen and mouse/keyboard access was not enabled.")
-        return False
+        self._add_message("assistant", "Visual task cancelled because screen and mouse/keyboard access was not enabled."); return False
 
     def _on_send(self) -> None:
         command = self.command_input.text().strip()
         if not command or self._thread is not None: return
-        if self._needs_visual_access(command) and not self._request_visual_access():
-            return
+        if self._needs_visual_access(command) and not self._request_visual_access(): return
         self._add_message("user", command); self.command_input.clear(); self.send_button.setEnabled(False); self.send_button.setText("Working…"); self.status.setText("● Working"); self.hint.setText("Working in the background. You can pause or stop a visual task at any time."); self.pause_button.setEnabled(True); self.stop_button.setEnabled(True)
         self._thread = QThread(self); self._worker = CommandWorker(self._agent, command); self._worker.moveToThread(self._thread); self._thread.started.connect(self._worker.run); self._worker.status.connect(self._on_worker_status); self._worker.finished.connect(self._on_worker_finished); self._worker.failed.connect(self._on_worker_failed); self._worker.finished.connect(self._thread.quit); self._worker.failed.connect(self._thread.quit); self._thread.finished.connect(self._cleanup_worker); self._thread.start()
 
@@ -212,37 +207,48 @@ class OverlayWindow(QMainWindow):
     def _open_settings(self) -> None:
         if self._settings_dialog is not None:
             try:
-                self._settings_dialog.raise_()
-                self._settings_dialog.activateWindow()
-                return
+                self._settings_dialog.raise_(); self._settings_dialog.activateWindow(); return
             except RuntimeError:
                 self._settings_dialog = None
         try:
-            dialog = SetupDialog(self)
-            self._settings_dialog = dialog
-            dialog.setModal(True)
+            source = SetupDialog(self)
+            wrapper = QDialog(self)
+            wrapper.setWindowTitle("AI Gmail Organizer — Settings")
+            wrapper.setModal(True)
+            wrapper.setObjectName("settingsWrapper")
+            wrapper_layout = QVBoxLayout(wrapper); wrapper_layout.setContentsMargins(0, 0, 0, 0)
+            scroll = QScrollArea(wrapper); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.NoFrame); scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff); scroll.setObjectName("settingsScroll")
+            source.setParent(wrapper); source.setWindowFlags(Qt.Widget); source.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
+            scroll.setWidget(source); wrapper_layout.addWidget(scroll)
+            source.accepted.connect(wrapper.accept); source.rejected.connect(wrapper.reject)
+            wrapper.setStyleSheet("""
+                QDialog#settingsWrapper { background: #121620; }
+                QScrollArea#settingsScroll { background: #121620; border: none; }
+                QScrollArea#settingsScroll > QWidget { background: #121620; }
+                QScrollBar:vertical { width: 8px; background: transparent; }
+                QScrollBar::handle:vertical { background: #46516A; border-radius: 4px; min-height: 36px; }
+                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+            """)
+            self._settings_dialog = wrapper
 
-            screen = self.screen() or self.windowHandle().screen() if self.windowHandle() else None
-            if screen is None:
-                from PySide6.QtGui import QGuiApplication
-                screen = QGuiApplication.primaryScreen()
+            from PySide6.QtGui import QGuiApplication
+            screen = self.screen() or QGuiApplication.primaryScreen()
             if screen is not None:
                 available = screen.availableGeometry()
-                width = min(max(760, available.width() - 120), 860)
-                height = min(max(520, available.height() - 100), 760)
-                dialog.resize(width, height)
-                dialog.setMinimumSize(min(680, width), min(480, height))
-                frame = dialog.frameGeometry()
-                frame.moveCenter(available.center())
-                dialog.move(frame.topLeft())
+                width = min(max(700, available.width() - 120), 860)
+                height = min(max(520, available.height() - 100), 720)
+                wrapper.setMinimumSize(min(680, width), min(480, height))
+                wrapper.resize(width, height)
+                frame = wrapper.frameGeometry(); frame.moveCenter(available.center()); wrapper.move(frame.topLeft())
+            else:
+                wrapper.resize(820, 680)
 
-            result = dialog.exec()
+            result = wrapper.exec()
             if result == QDialog.Accepted:
                 from dotenv import load_dotenv
                 from app.config.user_settings import ENV_FILE
                 load_dotenv(ENV_FILE, override=True)
-                self._agent = CommandAgent()
-                self._agent.windows.set_own_window(int(self.winId()))
+                self._agent = CommandAgent(); self._agent.windows.set_own_window(int(self.winId()))
                 self._add_message("assistant", "Settings updated. The new AI provider and local AI configuration are active now — no restart required.")
         except Exception as exc:
             QMessageBox.critical(self, "Settings could not be opened", f"The Settings window could not be opened.\n\n{exc}")
