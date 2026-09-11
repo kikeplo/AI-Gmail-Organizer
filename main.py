@@ -9,10 +9,6 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
-from app.agent.bulk_gmail import install_bulk_gmail
-from app.ui.overlay import OverlayWindow
-from app.ui.setup_dialog import SetupDialog
-
 
 def user_data_dir() -> Path:
     """Return a per-user application-data directory."""
@@ -35,7 +31,7 @@ def resource_path(relative: str) -> Path:
     return base / relative
 
 
-def configure_desktop_window(window: OverlayWindow) -> None:
+def configure_desktop_window(window) -> None:
     """Keep the original rounded UI while behaving as a normal desktop window."""
     window.setWindowFlags(Qt.Window | Qt.FramelessWindowHint)
     window.setWindowFlag(Qt.WindowStaysOnTopHint, False)
@@ -56,6 +52,11 @@ def configure_desktop_window(window: OverlayWindow) -> None:
 
 def main() -> int:
     config_dir = load_user_config()
+
+    # Keep optional performance work out of the critical GUI startup path.
+    from app.ai.performance import install_performance_optimizations, warm_optional_imports
+    install_performance_optimizations()
+
     app = QApplication(sys.argv)
     app.setApplicationName("AI Gmail Organizer")
     app.setOrganizationName("AI Gmail Organizer")
@@ -68,6 +69,7 @@ def main() -> int:
     config_file = config_dir / ".env"
     credentials_file = config_dir / "credentials.json"
     if not config_file.exists() and not credentials_file.exists():
+        from app.ui.setup_dialog import SetupDialog
         setup = SetupDialog()
         setup.setWindowModality(Qt.ApplicationModal)
         setup.setWindowFlags(Qt.Dialog | Qt.WindowTitleHint | Qt.WindowSystemMenuHint | Qt.WindowCloseButtonHint)
@@ -77,9 +79,14 @@ def main() -> int:
         setup.exec()
         load_dotenv(config_file, override=True)
 
+    # Import heavy application modules after Qt is initialized.
+    from app.agent.bulk_gmail import install_bulk_gmail
+    from app.ui.overlay import OverlayWindow
+
     window = OverlayWindow()
     install_bulk_gmail(window._agent)
     configure_desktop_window(window)
+    warm_optional_imports()
     return app.exec()
 
 
