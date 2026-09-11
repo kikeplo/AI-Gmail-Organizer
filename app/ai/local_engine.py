@@ -8,6 +8,7 @@ import json
 import os
 import shutil
 import subprocess
+from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -29,7 +30,20 @@ class LocalAIEngine:
 
     @property
     def ollama_executable(self) -> str | None:
-        return shutil.which("ollama")
+        found = shutil.which("ollama")
+        if found:
+            return found
+        local_appdata = os.getenv("LOCALAPPDATA", "")
+        candidates = [
+            Path(local_appdata) / "Programs" / "Ollama" / "ollama.exe" if local_appdata else None,
+            Path(local_appdata) / "Ollama" / "ollama.exe" if local_appdata else None,
+            Path(os.getenv("PROGRAMFILES", "C:\\Program Files")) / "Ollama" / "ollama.exe",
+            Path(os.getenv("PROGRAMFILES(X86)", "C:\\Program Files (x86)")) / "Ollama" / "ollama.exe",
+        ]
+        for path in candidates:
+            if path is not None and path.is_file():
+                return str(path)
+        return None
 
     @property
     def is_ollama_endpoint(self) -> bool:
@@ -41,24 +55,10 @@ class LocalAIEngine:
         try:
             models = self.list_models()
             selected = self.model if self.model in models else (models[0] if models else "")
-            return {
-                "enabled": True,
-                "available": bool(models),
-                "ollama_installed": bool(self.ollama_executable),
-                "models": models,
-                "model": selected,
-                "reason": "Local AI is ready." if models else "No local models installed.",
-            }
+            return {"enabled": True, "available": bool(models), "ollama_installed": bool(self.ollama_executable), "models": models, "model": selected, "reason": "Local AI is ready." if models else "No local models installed."}
         except Exception as exc:
             installed = bool(self.ollama_executable)
-            return {
-                "enabled": True,
-                "available": False,
-                "ollama_installed": installed,
-                "models": [],
-                "model": self.model,
-                "reason": str(exc) if installed or not self.is_ollama_endpoint else "Ollama is not installed or not running.",
-            }
+            return {"enabled": True, "available": False, "ollama_installed": installed, "models": [], "model": self.model, "reason": str(exc) if installed or not self.is_ollama_endpoint else "Ollama is not installed or not running."}
 
     def available(self) -> bool:
         return bool(self.status()["available"])
@@ -114,7 +114,6 @@ class LocalAIEngine:
         return result
 
     def install_model(self, model: str | None = None) -> str:
-        """Pull a model with the Ollama CLI; intended for an explicit user action."""
         model_name = (model or self.model or self.DEFAULT_MODEL).strip()
         if not model_name:
             raise LocalAIError("Enter a local model name first.")
@@ -122,14 +121,7 @@ class LocalAIEngine:
         if not executable:
             raise LocalAIError("Ollama is not installed. Install Ollama, then use this button again.")
         try:
-            completed = subprocess.run(
-                [executable, "pull", model_name],
-                check=False,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-            )
+            completed = subprocess.run([executable, "pull", model_name], check=False, capture_output=True, text=True, encoding="utf-8", errors="replace")
         except OSError as exc:
             raise LocalAIError(f"Could not start Ollama: {exc}") from exc
         output = (completed.stdout or completed.stderr or "").strip()
