@@ -105,7 +105,12 @@ class GoogleSetupDialog(QDialog):
         connect = QPushButton("Save & continue"); connect.clicked.connect(self._save)
         row.addStretch(); row.addWidget(cancel); row.addWidget(connect)
         layout.addLayout(row)
-        self.setStyleSheet("QDialog { background:#121620; color:#F1F5F9; } QLineEdit { color:#F7F8FA; background:#202738; border:1px solid #3A4356; border-radius:8px; padding:10px; } QPushButton { color:#F7F8FA; background:#2A3346; border:1px solid #46516A; border-radius:8px; padding:10px 14px; }")
+        self.setStyleSheet("""
+        QDialog, QWidget { background:#121620; color:#F1F5F9; }
+        QLabel { color:#E3E8F0; }
+        QLineEdit { color:#F7F8FA; background:#202738; border:1px solid #3A4356; border-radius:8px; padding:10px; }
+        QPushButton { color:#F7F8FA; background:#2A3346; border:1px solid #46516A; border-radius:8px; padding:10px 14px; }
+        """)
 
     def _save(self) -> None:
         client_id = self.client_id.text().strip()
@@ -121,7 +126,7 @@ class GoogleSetupDialog(QDialog):
 
 
 class SetupDialog(QDialog):
-    """Settings dialog with fixed viewport, scrolling content, and non-blocking startup checks."""
+    """Responsive settings dialog with a fixed viewport and scrollable content."""
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -147,6 +152,7 @@ class SetupDialog(QDialog):
         root.setSpacing(8)
 
         content = QWidget()
+        content.setObjectName("settingsContent")
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(8, 6, 8, 10)
         content_layout.setSpacing(10)
@@ -177,7 +183,7 @@ class SetupDialog(QDialog):
         self.show_backups.setObjectName("showBackupsButton")
         self.show_backups.toggled.connect(self._toggle_backup_visibility)
         backup_container.addWidget(self.show_backups)
-        self.backup_fields_container = QWidget(); backup_fields_layout = QVBoxLayout(self.backup_fields_container); backup_fields_layout.setContentsMargins(0, 0, 0, 0); backup_fields_layout.setSpacing(6)
+        self.backup_fields_container = QWidget(); self.backup_fields_container.setObjectName("backupFieldsContainer"); backup_fields_layout = QVBoxLayout(self.backup_fields_container); backup_fields_layout.setContentsMargins(0, 0, 0, 0); backup_fields_layout.setSpacing(6)
         for index in range(5):
             field = QLineEdit(backup_values[index] if index < len(backup_values) else "")
             field.setEchoMode(QLineEdit.Password); field.setClearButtonEnabled(True); field.setPlaceholderText(f"Backup API key {index + 1} — optional")
@@ -206,29 +212,82 @@ class SetupDialog(QDialog):
         capability = QPushButton("Check cloud capabilities"); capability.clicked.connect(self._check_capabilities); content_layout.addWidget(capability)
         note = QLabel("Settings apply after Save. Local AI is optional; cloud AI remains the automatic fallback unless you select Local-only. API keys are stored locally and displayed masked."); note.setWordWrap(True); note.setObjectName("settingsNote"); content_layout.addWidget(note); content_layout.addStretch()
 
-        scroll = QScrollArea(); scroll.setWidgetResizable(True); scroll.setFrameShape(QScrollArea.NoFrame); scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff); scroll.setObjectName("settingsScroll"); scroll.setWidget(content)
+        scroll = QScrollArea(); scroll.setObjectName("settingsScroll"); scroll.setWidgetResizable(True); scroll.setFrameShape(QScrollArea.NoFrame); scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff); scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded); scroll.setWidget(content)
+        scroll.viewport().setObjectName("settingsViewport")
         root.addWidget(scroll, 1)
         buttons = QHBoxLayout(); help_button = QPushButton("Help"); help_button.clicked.connect(self._open_help); cancel = QPushButton("Cancel"); cancel.clicked.connect(self.reject); save = QPushButton("Save"); save.clicked.connect(self._save); buttons.addWidget(help_button); buttons.addStretch(); buttons.addWidget(cancel); buttons.addWidget(save); root.addLayout(buttons)
 
         self.setStyleSheet("""
-        QDialog { background:#121620; color:#F1F5F9; }
-        QLabel { color:#E3E8F0; }
-        QLineEdit, QComboBox { color:#F7F8FA; background:#202738; border:1px solid #3A4356; border-radius:8px; padding:9px; }
-        QComboBox QAbstractItemView { color:#F7F8FA; background:#202738; selection-background-color:#35415B; }
-        QCheckBox { color:#F7F8FA; spacing:8px; }
-        QPushButton, QToolButton { color:#F7F8FA; background:#2A3346; border:1px solid #46516A; border-radius:8px; padding:9px 14px; }
-        QPushButton:hover, QToolButton:hover { background:#35415B; }
-        QPushButton#showBackupsButton { text-align:left; background:transparent; border:none; color:#B7C3D6; padding:5px 2px; }
-        QPushButton#showBackupsButton:hover { color:#FFFFFF; background:transparent; }
-        QToolButton#apiKeyEye { padding:6px; min-width:38px; max-width:38px; min-height:34px; max-height:34px; }
-        #settingsNote, #backupHint, #routingHint { color:#AAB4C4; background:transparent; border:none; }
-        #localStatus { color:#DCE5F3; background:#1A2231; border:1px solid #354057; border-radius:9px; padding:9px; }
-        #capabilityBox { color:#EAF0F8; background:#1A2231; border:1px solid #354057; border-radius:10px; padding:12px; }
-        QScrollArea#settingsScroll { background:transparent; border:none; }
-        QScrollBar:vertical { width:8px; background:transparent; margin:2px 0; }
-        QScrollBar::handle:vertical { background:#46516A; border-radius:4px; min-height:30px; }
-        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height:0; }
+        QDialog#SetupDialog, QWidget#settingsContent, QScrollArea#settingsScroll, QWidget#settingsViewport {
+            background: #121620;
+            color: #F1F5F9;
+        }
+        QLabel { color: #E3E8F0; }
+        QLineEdit, QComboBox {
+            color: #F7F8FA;
+            background: #202738;
+            border: 1px solid #3A4356;
+            border-radius: 8px;
+            padding: 9px;
+        }
+        QComboBox QAbstractItemView {
+            color: #F7F8FA;
+            background: #202738;
+            selection-background-color: #35415B;
+            selection-color: #FFFFFF;
+        }
+        QCheckBox { color: #F7F8FA; spacing: 8px; }
+        QPushButton, QToolButton {
+            color: #F7F8FA;
+            background: #2A3346;
+            border: 1px solid #46516A;
+            border-radius: 8px;
+            padding: 9px 14px;
+        }
+        QPushButton:hover, QToolButton:hover { background: #35415B; }
+        QPushButton#showBackupsButton {
+            text-align: left;
+            background: transparent;
+            border: none;
+            color: #B7C3D6;
+            padding: 5px 2px;
+        }
+        QPushButton#showBackupsButton:hover {
+            color: #FFFFFF;
+            background: transparent;
+        }
+        QToolButton#apiKeyEye {
+            padding: 6px;
+            min-width: 38px;
+            max-width: 38px;
+            min-height: 34px;
+            max-height: 34px;
+        }
+        #settingsNote, #backupHint, #routingHint {
+            color: #AAB4C4;
+            background: transparent;
+            border: none;
+        }
+        #localStatus {
+            color: #DCE5F3;
+            background: #1A2231;
+            border: 1px solid #354057;
+            border-radius: 9px;
+            padding: 9px;
+        }
+        #capabilityBox {
+            color: #EAF0F8;
+            background: #1A2231;
+            border: 1px solid #354057;
+            border-radius: 10px;
+            padding: 12px;
+        }
+        QScrollArea#settingsScroll { background: #121620; border: none; }
+        QScrollBar:vertical { width: 8px; background: #121620; margin: 2px 0; }
+        QScrollBar::handle:vertical { background: #46516A; border-radius: 4px; min-height: 30px; }
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
         """)
+        self.setObjectName("SetupDialog")
         self._toggle_local_controls(self.local_enabled.isChecked())
         QTimer.singleShot(0, lambda: self._check_local_ai(show_message=False))
 
@@ -248,10 +307,17 @@ class SetupDialog(QDialog):
     def _toggle_backup_visibility(self, visible: bool) -> None:
         self.backup_fields_container.setVisible(visible)
         self.show_backups.setText("Hide backup API keys" if visible else "Show backup API keys")
-        self.adjustSize()
-        screen = self.screen() or QGuiApplication.primaryScreen()
-        if screen:
-            available = screen.availableGeometry(); max_h = max(480, available.height() - 80); max_w = min(820, max(620, available.width() - 80)); self.setMaximumSize(max_w, max_h); self.resize(min(self.width(), max_w), min(self.height(), max_h))
+        # Deliberately do not call adjustSize()/resize(). The dialog keeps a
+        # stable footprint and the scroll area handles the extra backup fields.
+        scroll = self.findChild(QScrollArea, "settingsScroll")
+        if scroll is not None:
+            scroll.ensureWidgetVisible(self.backup_fields_container if visible else self.show_backups)
+        QTimer.singleShot(0, lambda: self._keep_settings_geometry())
+
+    def _keep_settings_geometry(self) -> None:
+        # Re-assert the current size after Qt relayout without changing it.
+        size = self.size()
+        self.resize(size)
 
     def _toggle_local_controls(self, enabled: bool) -> None:
         self.local_model.setEnabled(enabled); self.local_base_url.setEnabled(enabled); self.local_check.setEnabled(enabled); self.local_install.setEnabled(enabled)
