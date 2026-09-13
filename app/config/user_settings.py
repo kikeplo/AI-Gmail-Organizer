@@ -39,8 +39,8 @@ def save_backup_api_keys(api_keys: list[str]) -> None:
 def get_api_keys(config: dict[str, str] | None = None) -> list[str]:
     """Return primary + backup API keys in configured order, without duplicates."""
     values = config or read_config()
-    result: list[str] = []
     raw_backups = [item for chunk in values.get("OPENAI_API_KEYS", "").splitlines() for item in chunk.split(",")]
+    result: list[str] = []
     for key in [values.get("OPENAI_API_KEY", ""), *raw_backups]:
         normalized = key.strip()
         if normalized and normalized not in result:
@@ -65,13 +65,21 @@ def save_gmail_client_id(client_id: str) -> None:
 
 
 def save_local_ai(enabled: bool, base_url: str, model: str) -> None:
-    set_key(str(ENV_FILE), "LOCAL_AI_ENABLED", "1" if enabled else "0")
-    set_key(str(ENV_FILE), "LOCAL_AI_BASE_URL", base_url.strip().rstrip("/"))
-    set_key(str(ENV_FILE), "LOCAL_AI_MODEL", model.strip())
+    values = {
+        "LOCAL_AI_ENABLED": "1" if enabled else "0",
+        "LOCAL_AI_BASE_URL": base_url.strip().rstrip("/"),
+        "LOCAL_AI_MODEL": model.strip(),
+    }
+    for key, value in values.items():
+        set_key(str(ENV_FILE), key, value)
+        os.environ[key] = value
 
 
 def save_routing_mode(mode: str) -> None:
-    set_key(str(ENV_FILE), "AI_ROUTING_MODE", mode.strip().lower())
+    """Persist and immediately apply the routing policy to the current process."""
+    normalized = mode.strip().lower()
+    set_key(str(ENV_FILE), "AI_ROUTING_MODE", normalized)
+    os.environ["AI_ROUTING_MODE"] = normalized
 
 
 def save_browser_settings(mode: str, cdp_url: str, profile_dir: str) -> None:
