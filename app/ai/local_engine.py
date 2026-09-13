@@ -182,6 +182,40 @@ class LocalAIEngine:
             raise LocalAIError("The local vision model returned an invalid action format.")
         return result
 
+    def _ensure_ollama_server(self, executable: str) -> None:
+        """Ensure the local Ollama daemon is reachable before starting a model pull."""
+        try:
+            request = Request(f"{self.ollama_base_url}/api/tags", headers={"Accept": "application/json"}, method="GET")
+            with urlopen(request, timeout=1.5):
+                return
+        except (HTTPError, URLError, TimeoutError, OSError):
+            pass
+
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        try:
+            subprocess.Popen(
+                [executable, "serve"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=flags,
+                close_fds=True,
+            )
+        except OSError as exc:
+            raise LocalAIError(f"Could not start the Ollama service: {exc}") from exc
+
+        last_error = "Ollama did not become available."
+        for _ in range(20):
+            try:
+                request = Request(f"{self.ollama_base_url}/api/tags", headers={"Accept": "application/json"}, method="GET")
+                with urlopen(request, timeout=0.75):
+                    return
+            except (HTTPError, URLError, TimeoutError, OSError) as exc:
+                last_error = str(exc)
+            import time
+            time.sleep(0.25)
+        raise LocalAIError(f"Ollama is installed but its local service could not be started. {last_error}")
+
     def install_model(self, model: str | None = None) -> str:
         model_name = (model or self.model or self.DEFAULT_MODEL).strip()
         if not model_name:
@@ -189,11 +223,26 @@ class LocalAIEngine:
         executable = self.ollama_executable
         if not executable:
             raise LocalAIError("Ollama is not installed. Install Ollama, then use this button again.")
+        self._ensure_ollama_server(executable)
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         try:
-            completed = subprocess.run([executable, "pull", model_name], check=False, capture_output=True, text=True, encoding="utf-8", errors="replace")
+            completed = subprocess.run(
+                [executable, "pull", model_name],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=1800,
+                creationflags=flags,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise LocalAIError(f"Ollama timed out while installing {model_name}. Try the Install model button again or run 'ollama pull {model_name}' in PowerShell.") from exc
         except OSError as exc:
             raise LocalAIError(f"Could not start Ollama: {exc}") from exc
-        output = (completed.stdout or completed.stderr or "").strip()
+        output = (completed.stdout or "").strip()
         if completed.returncode != 0:
             raise LocalAIError(f"Ollama could not install {model_name}.\n\n{output or 'Unknown Ollama error.'}")
         return output or f"Ollama installed {model_name}."
