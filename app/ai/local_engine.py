@@ -80,13 +80,25 @@ class LocalAIEngine:
                 return model
         return models[0]
 
+    def _thinking_enabled(self) -> bool:
+        return os.getenv("LOCAL_AI_THINKING", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+    def _request_options(self) -> dict[str, object]:
+        """Return Ollama-compatible generation controls while remaining safe for other local runtimes."""
+        options: dict[str, object] = {}
+        if self.is_ollama_endpoint:
+            options["think"] = self._thinking_enabled()
+        return options
+
     def chat(self, prompt: str, system: str = "") -> str:
         if not self.enabled:
             raise LocalAIError("Local AI is disabled.")
-        body = {"model": self.resolve_model(), "messages": [{"role": "system", "content": system or "You are a concise local assistant for lightweight desktop tasks."}, {"role": "user", "content": prompt}]}
+        body = {"model": self.resolve_model(), "messages": [{"role": "system", "content": system or "You are a concise local assistant for lightweight desktop tasks."}, {"role": "user", "content": prompt}], "stream": False}
+        body.update(self._request_options())
         data = self._request("POST", f"{self.base_url}/chat/completions", body)
         try:
-            content = data["choices"][0]["message"]["content"]
+            message = data["choices"][0]["message"]
+            content = message.get("content", "")
         except (KeyError, IndexError, TypeError) as exc:
             raise LocalAIError("The local AI runtime returned an unsupported response format.") from exc
         if isinstance(content, list):
@@ -98,7 +110,8 @@ class LocalAIEngine:
         if not self.enabled:
             raise LocalAIError("Local AI is disabled.")
         encoded = base64.b64encode(self._image_bytes(image)).decode("ascii")
-        body = {"model": self.resolve_model(), "messages": [{"role": "system", "content": "Return only valid JSON."}, {"role": "user", "content": [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encoded}"}}]}]}
+        body = {"model": self.resolve_model(), "messages": [{"role": "system", "content": "Return only valid JSON."}, {"role": "user", "content": [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encoded}"}}]}], "stream": False}
+        body.update(self._request_options())
         data = self._request("POST", f"{self.base_url}/chat/completions", body)
         try:
             raw = str(data["choices"][0]["message"]["content"]).strip()
