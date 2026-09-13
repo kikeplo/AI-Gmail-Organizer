@@ -22,6 +22,8 @@ class LocalAIEngine:
 
     DEFAULT_BASE_URL = "http://localhost:11434/v1"
     DEFAULT_MODEL = "qwen3:4b"
+    DEFAULT_KEEP_ALIVE = "30m"
+    DEFAULT_NUM_CTX = 4096
 
     def __init__(self) -> None:
         self.base_url = os.getenv("LOCAL_AI_BASE_URL", self.DEFAULT_BASE_URL).strip().rstrip("/") or self.DEFAULT_BASE_URL
@@ -95,9 +97,26 @@ class LocalAIEngine:
     def _thinking_enabled(self) -> bool:
         return os.getenv("LOCAL_AI_THINKING", "0").strip().lower() in {"1", "true", "yes", "on"}
 
+    def _keep_alive(self) -> str | int:
+        value = os.getenv("LOCAL_AI_KEEP_ALIVE", self.DEFAULT_KEEP_ALIVE).strip()
+        if value.lower() in {"0", "0s", "false", "off"}:
+            return 0
+        return value or self.DEFAULT_KEEP_ALIVE
+
+    def _num_ctx(self) -> int:
+        try:
+            return max(1024, min(int(os.getenv("LOCAL_AI_NUM_CTX", str(self.DEFAULT_NUM_CTX))), 32768))
+        except (TypeError, ValueError):
+            return self.DEFAULT_NUM_CTX
+
     def _request_options(self) -> dict[str, object]:
-        """Return Ollama generation controls for native Ollama requests."""
-        return {"think": self._thinking_enabled()} if self.is_ollama_endpoint else {}
+        """Return Ollama generation controls tuned for responsive desktop use."""
+        if not self.is_ollama_endpoint:
+            return {}
+        return {
+            "num_ctx": self._num_ctx(),
+            "temperature": 0.2,
+        }
 
     def chat(self, prompt: str, system: str = "") -> str:
         if not self.enabled:
@@ -108,21 +127,28 @@ class LocalAIEngine:
             {"role": "user", "content": prompt},
         ]
         if self.is_ollama_endpoint:
-            body = {"model": model, "messages": messages, "stream": False}
-            body.update(self._request_options())
+            body = {
+                "model": model,
+                "messages": messages,
+                "stream": False,
+                "think": self._thinking_enabled(),
+                "keep_alive": self._keep_alive(),
+                "options": self._request_options(),
+            }
             data = self._request("POST", f"{self.ollama_base_url}/api/chat", body)
+            try:
+                message = data["message"]
+                content = message.get("content", "")
+            except (KeyError, TypeError) as exc:
+                raise LocalAIError("The local AI runtime returned an unsupported response format.") from exc
         else:
             body = {"model": model, "messages": messages, "stream": False}
             data = self._request("POST", f"{self.base_url}/chat/completions", body)
-        try:
-            if self.is_ollama_endpoint:
-                message = data["message"]
-                content = message.get("content", "")
-            else:
+            try:
                 message = data["choices"][0]["message"]
                 content = message.get("content", "")
-        except (KeyError, IndexError, TypeError) as exc:
-            raise LocalAIError("The local AI runtime returned an unsupported response format.") from exc
+            except (KeyError, IndexError, TypeError) as exc:
+                raise LocalAIError("The local AI runtime returned an unsupported response format.") from exc
         if isinstance(content, list):
             content = "".join(part.get("text", "") for part in content if isinstance(part, dict))
         return str(content).strip()
@@ -140,8 +166,10 @@ class LocalAIEngine:
                     {"role": "user", "content": prompt, "images": [encoded]},
                 ],
                 "stream": False,
+                "think": self._thinking_enabled(),
+                "keep_alive": self._keep_alive(),
+                "options": self._request_options(),
             }
-            body.update(self._request_options())
             data = self._request("POST", f"{self.ollama_base_url}/api/chat", body)
             try:
                 raw = str(data["message"]["content"]).strip()
