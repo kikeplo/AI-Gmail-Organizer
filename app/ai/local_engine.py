@@ -18,7 +18,7 @@ class LocalAIError(RuntimeError):
 
 
 class LocalAIEngine:
-    """OpenAI-compatible local AI client, with first-class Ollama setup helpers."""
+    """Local AI client with first-class Ollama support and OpenAI-compatible fallback."""
 
     DEFAULT_BASE_URL = "http://localhost:11434/v1"
     DEFAULT_MODEL = "qwen3:4b"
@@ -49,6 +49,14 @@ class LocalAIEngine:
     def is_ollama_endpoint(self) -> bool:
         return ":11434" in self.base_url.lower() or "ollama" in self.base_url.lower()
 
+    @property
+    def ollama_base_url(self) -> str:
+        """Derive Ollama's native API root from an OpenAI-compatible base URL."""
+        base = self.base_url.rstrip("/")
+        if base.lower().endswith("/v1"):
+            base = base[:-3].rstrip("/")
+        return base or "http://localhost:11434"
+
     def status(self) -> dict[str, object]:
         if not self.enabled:
             return {"enabled": False, "available": False, "ollama_installed": bool(self.ollama_executable), "models": [], "model": self.model, "reason": "Local AI is disabled."}
@@ -64,8 +72,12 @@ class LocalAIEngine:
         return bool(self.status()["available"])
 
     def list_models(self) -> list[str]:
-        data = self._request("GET", f"{self.base_url}/models")
-        models = [str(item["id"]) for item in data.get("data", []) if isinstance(item, dict) and item.get("id")]
+        if self.is_ollama_endpoint:
+            data = self._request("GET", f"{self.ollama_base_url}/api/tags")
+            models = [str(item["name"]) for item in data.get("models", []) if isinstance(item, dict) and item.get("name")]
+        else:
+            data = self._request("GET", f"{self.base_url}/models")
+            models = [str(item["id"]) for item in data.get("data", []) if isinstance(item, dict) and item.get("id")]
         if not models:
             raise LocalAIError("No local AI models were found. Install a model in your local AI runtime first.")
         return models
@@ -84,21 +96,31 @@ class LocalAIEngine:
         return os.getenv("LOCAL_AI_THINKING", "0").strip().lower() in {"1", "true", "yes", "on"}
 
     def _request_options(self) -> dict[str, object]:
-        """Return Ollama-compatible generation controls while remaining safe for other local runtimes."""
-        options: dict[str, object] = {}
-        if self.is_ollama_endpoint:
-            options["think"] = self._thinking_enabled()
-        return options
+        """Return Ollama generation controls for native Ollama requests."""
+        return {"think": self._thinking_enabled()} if self.is_ollama_endpoint else {}
 
     def chat(self, prompt: str, system: str = "") -> str:
         if not self.enabled:
             raise LocalAIError("Local AI is disabled.")
-        body = {"model": self.resolve_model(), "messages": [{"role": "system", "content": system or "You are a concise local assistant for lightweight desktop tasks."}, {"role": "user", "content": prompt}], "stream": False}
-        body.update(self._request_options())
-        data = self._request("POST", f"{self.base_url}/chat/completions", body)
+        model = self.resolve_model()
+        messages = [
+            {"role": "system", "content": system or "You are a concise local assistant for lightweight desktop tasks."},
+            {"role": "user", "content": prompt},
+        ]
+        if self.is_ollama_endpoint:
+            body = {"model": model, "messages": messages, "stream": False}
+            body.update(self._request_options())
+            data = self._request("POST", f"{self.ollama_base_url}/api/chat", body)
+        else:
+            body = {"model": model, "messages": messages, "stream": False}
+            data = self._request("POST", f"{self.base_url}/chat/completions", body)
         try:
-            message = data["choices"][0]["message"]
-            content = message.get("content", "")
+            if self.is_ollama_endpoint:
+                message = data["message"]
+                content = message.get("content", "")
+            else:
+                message = data["choices"][0]["message"]
+                content = message.get("content", "")
         except (KeyError, IndexError, TypeError) as exc:
             raise LocalAIError("The local AI runtime returned an unsupported response format.") from exc
         if isinstance(content, list):
@@ -106,17 +128,32 @@ class LocalAIEngine:
         return str(content).strip()
 
     def vision_json(self, prompt: str, image) -> dict:
-        """Use a local multimodal model through an OpenAI-compatible vision request."""
+        """Use a local multimodal model through native Ollama or OpenAI-compatible vision."""
         if not self.enabled:
             raise LocalAIError("Local AI is disabled.")
         encoded = base64.b64encode(self._image_bytes(image)).decode("ascii")
-        body = {"model": self.resolve_model(), "messages": [{"role": "system", "content": "Return only valid JSON."}, {"role": "user", "content": [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encoded}"}}]}], "stream": False}
-        body.update(self._request_options())
-        data = self._request("POST", f"{self.base_url}/chat/completions", body)
-        try:
-            raw = str(data["choices"][0]["message"]["content"]).strip()
-        except (KeyError, IndexError, TypeError) as exc:
-            raise LocalAIError("The local vision model returned an unsupported response.") from exc
+        if self.is_ollama_endpoint:
+            body = {
+                "model": self.resolve_model(),
+                "messages": [
+                    {"role": "system", "content": "Return only valid JSON."},
+                    {"role": "user", "content": prompt, "images": [encoded]},
+                ],
+                "stream": False,
+            }
+            body.update(self._request_options())
+            data = self._request("POST", f"{self.ollama_base_url}/api/chat", body)
+            try:
+                raw = str(data["message"]["content"]).strip()
+            except (KeyError, TypeError) as exc:
+                raise LocalAIError("The local vision model returned an unsupported response.") from exc
+        else:
+            body = {"model": self.resolve_model(), "messages": [{"role": "system", "content": "Return only valid JSON."}, {"role": "user", "content": [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encoded}"}}]}], "stream": False}
+            data = self._request("POST", f"{self.base_url}/chat/completions", body)
+            try:
+                raw = str(data["choices"][0]["message"]["content"]).strip()
+            except (KeyError, IndexError, TypeError) as exc:
+                raise LocalAIError("The local vision model returned an unsupported response.") from exc
         raw = raw.replace("```json", "").replace("```", "").strip()
         try:
             result = json.loads(raw)
