@@ -8,6 +8,7 @@ import json
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -55,7 +56,6 @@ class LocalAIEngine:
 
     @property
     def ollama_base_url(self) -> str:
-        """Derive Ollama's native API root from an OpenAI-compatible base URL."""
         base = self.base_url.rstrip("/")
         if base.lower().endswith("/v1"):
             base = base[:-3].rstrip("/")
@@ -121,7 +121,6 @@ class LocalAIEngine:
             return 192
 
     def _request_options(self) -> dict[str, object]:
-        """Return Ollama generation controls tuned for responsive desktop use."""
         if not self.is_ollama_endpoint:
             return {}
         return {"num_ctx": self._num_ctx(), "temperature": 0.2, "num_predict": self._max_tokens()}
@@ -155,7 +154,6 @@ class LocalAIEngine:
         return str(content).strip()
 
     def vision_json(self, prompt: str, image) -> dict:
-        """Use a local multimodal model through native Ollama or OpenAI-compatible vision."""
         if not self.enabled:
             raise LocalAIError("Local AI is disabled.")
         encoded = base64.b64encode(self._image_bytes(image)).decode("ascii")
@@ -183,7 +181,7 @@ class LocalAIEngine:
         return result
 
     def _ensure_ollama_server(self, executable: str) -> None:
-        """Ensure the local Ollama daemon is reachable before starting a model pull."""
+        """Ensure Ollama is available without spawning a console window."""
         try:
             request = Request(f"{self.ollama_base_url}/api/tags", headers={"Accept": "application/json"}, method="GET")
             with urlopen(request, timeout=1.5):
@@ -191,33 +189,34 @@ class LocalAIEngine:
         except (HTTPError, URLError, TimeoutError, OSError):
             pass
 
-        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        # Prefer the Ollama desktop application/tray process. Do not run
+        # `ollama serve` here: that CLI path can create a visible console.
+        gui_candidates = [
+            Path(executable).with_name("Ollama.exe"),
+            Path(os.getenv("LOCALAPPDATA", "")) / "Programs" / "Ollama" / "Ollama.exe" if os.getenv("LOCALAPPDATA") else None,
+        ]
+        gui = next((path for path in gui_candidates if path and path.is_file()), None)
+        if gui is None:
+            raise LocalAIError("Ollama is installed but its local service is not running. Start the Ollama desktop app, then click Install model again.")
         try:
-            subprocess.Popen(
-                [executable, "serve"],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                creationflags=flags,
-                close_fds=True,
-            )
+            flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            subprocess.Popen([str(gui)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=flags, close_fds=True)
         except OSError as exc:
-            raise LocalAIError(f"Could not start the Ollama service: {exc}") from exc
+            raise LocalAIError(f"Could not start the Ollama desktop app: {exc}") from exc
 
         last_error = "Ollama did not become available."
-        for _ in range(20):
+        for _ in range(40):
             try:
                 request = Request(f"{self.ollama_base_url}/api/tags", headers={"Accept": "application/json"}, method="GET")
                 with urlopen(request, timeout=0.75):
                     return
             except (HTTPError, URLError, TimeoutError, OSError) as exc:
                 last_error = str(exc)
-            import time
             time.sleep(0.25)
-        raise LocalAIError(f"Ollama is installed but its local service could not be started. {last_error}")
+        raise LocalAIError(f"Ollama desktop app started, but the local service did not become available. {last_error}")
 
-    def _pull_ollama_model(self, model_name: str) -> str:
-        """Pull a model through Ollama's native HTTP API so no terminal is spawned."""
+    def _pull_ollama_model(self, model_name: str, progress_callback=None) -> str:
+        """Pull a model through Ollama's native HTTP API, reporting byte progress."""
         body = json.dumps({"name": model_name, "stream": True}).encode("utf-8")
         request = Request(
             f"{self.ollama_base_url}/api/pull",
@@ -236,12 +235,22 @@ class LocalAIEngine:
                         payload = json.loads(line.decode("utf-8", errors="replace"))
                     except json.JSONDecodeError:
                         continue
-                    if isinstance(payload, dict):
-                        if payload.get("error"):
-                            raise LocalAIError(f"Ollama could not install {model_name}.\n\n{payload['error']}")
-                        status = str(payload.get("status", "")).strip()
-                        if status:
-                            last_status = status
+                    if not isinstance(payload, dict):
+                        continue
+                    if payload.get("error"):
+                        raise LocalAIError(f"Ollama could not install {model_name}.\n\n{payload['error']}")
+                    status = str(payload.get("status", "")).strip()
+                    if status:
+                        last_status = status
+                    if progress_callback is not None:
+                        try:
+                            completed = int(payload.get("completed", 0) or 0)
+                            total = int(payload.get("total", 0) or 0)
+                            progress_callback(status or "Downloading…", completed, total)
+                        except (TypeError, ValueError):
+                            pass
+            if progress_callback is not None:
+                progress_callback("Verifying model…", 0, 0)
             return last_status or f"Ollama installed {model_name}."
         except HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
@@ -253,7 +262,7 @@ class LocalAIEngine:
         except OSError as exc:
             raise LocalAIError(f"Could not communicate with Ollama while installing {model_name}: {exc}") from exc
 
-    def install_model(self, model: str | None = None) -> str:
+    def install_model(self, model: str | None = None, progress_callback=None) -> str:
         model_name = (model or self.model or self.DEFAULT_MODEL).strip()
         if not model_name:
             raise LocalAIError("Enter a local model name first.")
@@ -263,7 +272,7 @@ class LocalAIEngine:
         self._ensure_ollama_server(executable)
         if not self.is_ollama_endpoint:
             raise LocalAIError("Model installation from Settings currently requires an Ollama endpoint (localhost:11434).")
-        return self._pull_ollama_model(model_name)
+        return self._pull_ollama_model(model_name, progress_callback=progress_callback)
 
     @staticmethod
     def _image_bytes(image) -> bytes:
