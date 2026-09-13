@@ -216,6 +216,43 @@ class LocalAIEngine:
             time.sleep(0.25)
         raise LocalAIError(f"Ollama is installed but its local service could not be started. {last_error}")
 
+    def _pull_ollama_model(self, model_name: str) -> str:
+        """Pull a model through Ollama's native HTTP API so no terminal is spawned."""
+        body = json.dumps({"name": model_name, "stream": True}).encode("utf-8")
+        request = Request(
+            f"{self.ollama_base_url}/api/pull",
+            data=body,
+            headers={"Accept": "application/x-ndjson", "Content-Type": "application/json"},
+            method="POST",
+        )
+        last_status = ""
+        try:
+            with urlopen(request, timeout=30) as response:
+                while True:
+                    line = response.readline()
+                    if not line:
+                        break
+                    try:
+                        payload = json.loads(line.decode("utf-8", errors="replace"))
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(payload, dict):
+                        if payload.get("error"):
+                            raise LocalAIError(f"Ollama could not install {model_name}.\n\n{payload['error']}")
+                        status = str(payload.get("status", "")).strip()
+                        if status:
+                            last_status = status
+            return last_status or f"Ollama installed {model_name}."
+        except HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise LocalAIError(f"Ollama could not install {model_name}.\n\n{detail or exc.reason}") from exc
+        except URLError as exc:
+            raise LocalAIError(f"Local Ollama connection error while installing {model_name}: {exc.reason}") from exc
+        except TimeoutError as exc:
+            raise LocalAIError(f"Ollama timed out while installing {model_name}.") from exc
+        except OSError as exc:
+            raise LocalAIError(f"Could not communicate with Ollama while installing {model_name}: {exc}") from exc
+
     def install_model(self, model: str | None = None) -> str:
         model_name = (model or self.model or self.DEFAULT_MODEL).strip()
         if not model_name:
@@ -224,28 +261,9 @@ class LocalAIEngine:
         if not executable:
             raise LocalAIError("Ollama is not installed. Install Ollama, then use this button again.")
         self._ensure_ollama_server(executable)
-        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        try:
-            completed = subprocess.run(
-                [executable, "pull", model_name],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=1800,
-                creationflags=flags,
-                check=False,
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise LocalAIError(f"Ollama timed out while installing {model_name}. Try the Install model button again or run 'ollama pull {model_name}' in PowerShell.") from exc
-        except OSError as exc:
-            raise LocalAIError(f"Could not start Ollama: {exc}") from exc
-        output = (completed.stdout or "").strip()
-        if completed.returncode != 0:
-            raise LocalAIError(f"Ollama could not install {model_name}.\n\n{output or 'Unknown Ollama error.'}")
-        return output or f"Ollama installed {model_name}."
+        if not self.is_ollama_endpoint:
+            raise LocalAIError("Model installation from Settings currently requires an Ollama endpoint (localhost:11434).")
+        return self._pull_ollama_model(model_name)
 
     @staticmethod
     def _image_bytes(image) -> bytes:
