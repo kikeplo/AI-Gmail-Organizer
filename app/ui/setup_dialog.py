@@ -8,8 +8,8 @@ from PySide6.QtCore import QByteArray, QThread, Signal, Qt, QTimer
 from PySide6.QtGui import QIcon, QPixmap, QGuiApplication
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QFormLayout, QHBoxLayout,
-    QLabel, QLineEdit, QMessageBox, QPushButton, QScrollArea, QToolButton,
-    QVBoxLayout, QWidget,
+    QLabel, QLineEdit, QMessageBox, QPushButton, QProgressBar, QScrollArea,
+    QToolButton, QVBoxLayout, QWidget,
 )
 
 from app.ai.local_engine import LocalAIEngine
@@ -54,6 +54,7 @@ class _GoogleLogin(QThread):
 class _LocalInstaller(QThread):
     completed = Signal(str)
     failed = Signal(str)
+    progress = Signal(str, int, int)
 
     def __init__(self, engine: LocalAIEngine, model: str) -> None:
         super().__init__()
@@ -62,9 +63,12 @@ class _LocalInstaller(QThread):
 
     def run(self) -> None:
         try:
-            self.completed.emit(self.engine.install_model(self.model))
+            self.completed.emit(self.engine.install_model(self.model, progress_callback=self._progress))
         except Exception as exc:
             self.failed.emit(str(exc))
+
+    def _progress(self, status: str, completed: int, total: int) -> None:
+        self.progress.emit(status, completed, total)
 
 
 class GoogleSetupDialog(QDialog):
@@ -200,9 +204,11 @@ class SetupDialog(QDialog):
         refresh = QPushButton("Refresh models"); refresh.clicked.connect(self._refresh_models); model_row.addWidget(self.model, 1); model_row.addWidget(refresh); form.addRow("Cloud model", model_row)
 
         self.local_enabled = QCheckBox("Use Local AI when available"); self.local_enabled.setChecked(config.get("LOCAL_AI_ENABLED", "1").strip().lower() not in {"0", "false", "no", "off"}); self.local_enabled.toggled.connect(self._toggle_local_controls); form.addRow("Local AI", self.local_enabled)
-        local_row = QHBoxLayout(); self.local_model = QLineEdit(config.get("LOCAL_AI_MODEL", LocalAIEngine.DEFAULT_MODEL) or LocalAIEngine.DEFAULT_MODEL); self.local_model.setPlaceholderText("qwen3:4b"); self.local_check = QPushButton("Check local AI"); self.local_check.clicked.connect(self._check_local_ai); self.local_install = QPushButton("Install model"); self.local_install.clicked.connect(self._install_local_model); local_row.addWidget(self.local_model, 1); local_row.addWidget(self.local_check); local_row.addWidget(self.local_install); form.addRow("Local model", local_row)
+        local_row = QHBoxLayout(); self.local_model = QLineEdit(config.get("LOCAL_AI_MODEL", LocalAIEngine.DEFAULT_MODEL) or LocalAIEngine.DEFAULT_MODEL); self.local_model.setPlaceholderText("qwen3:1.7b"); self.local_check = QPushButton("Check local AI"); self.local_check.clicked.connect(self._check_local_ai); self.local_install = QPushButton("Install model"); self.local_install.clicked.connect(self._install_local_model); local_row.addWidget(self.local_model, 1); local_row.addWidget(self.local_check); local_row.addWidget(self.local_install); form.addRow("Local model", local_row)
         self.local_base_url = QLineEdit(config.get("LOCAL_AI_BASE_URL", LocalAIEngine.DEFAULT_BASE_URL) or LocalAIEngine.DEFAULT_BASE_URL); self.local_base_url.setPlaceholderText(LocalAIEngine.DEFAULT_BASE_URL); form.addRow("Local AI URL", self.local_base_url)
         self.local_status = QLabel("Local AI status: checking…"); self.local_status.setWordWrap(True); self.local_status.setObjectName("localStatus"); form.addRow("Status", self.local_status)
+        self.local_install_status = QLabel("Install status: ready"); self.local_install_status.setWordWrap(True); self.local_install_status.setObjectName("localInstallStatus"); form.addRow("Model install", self.local_install_status)
+        self.local_progress = QProgressBar(); self.local_progress.setRange(0, 100); self.local_progress.setValue(0); self.local_progress.setTextVisible(True); self.local_progress.setObjectName("localProgress"); self.local_progress.setVisible(False); form.addRow("Download", self.local_progress)
         routing_value = config.get("AI_ROUTING_MODE", "local-first") or "local-first"; self.routing = QComboBox(); self.routing.addItems(["local-first", "cloud-first", "balanced", "local-only"]); self.routing.setCurrentText(routing_value if routing_value in {"local-first", "cloud-first", "balanced", "local-only"} else "local-first"); form.addRow("AI routing", self.routing)
         routing_hint = QLabel("Local-first keeps normal AI work on your PC. When Local AI is missing, stopped, or fails, the app automatically uses the configured cloud provider. Local-only never sends requests to cloud AI."); routing_hint.setWordWrap(True); routing_hint.setObjectName("routingHint"); form.addRow("", routing_hint)
 
@@ -237,6 +243,15 @@ class SetupDialog(QDialog):
             selection-color: #FFFFFF;
         }
         QCheckBox { color: #F7F8FA; spacing: 8px; }
+        QProgressBar {
+            color: #F7F8FA;
+            background: #202738;
+            border: 1px solid #3A4356;
+            border-radius: 7px;
+            text-align: center;
+            min-height: 18px;
+        }
+        QProgressBar::chunk { background: #4F6B95; border-radius: 6px; }
         QPushButton, QToolButton {
             color: #F7F8FA;
             background: #2A3346;
@@ -268,7 +283,7 @@ class SetupDialog(QDialog):
             background: transparent;
             border: none;
         }
-        #localStatus {
+        #localStatus, #localInstallStatus {
             color: #DCE5F3;
             background: #1A2231;
             border: 1px solid #354057;
@@ -307,15 +322,12 @@ class SetupDialog(QDialog):
     def _toggle_backup_visibility(self, visible: bool) -> None:
         self.backup_fields_container.setVisible(visible)
         self.show_backups.setText("Hide backup API keys" if visible else "Show backup API keys")
-        # Deliberately do not call adjustSize()/resize(). The dialog keeps a
-        # stable footprint and the scroll area handles the extra backup fields.
         scroll = self.findChild(QScrollArea, "settingsScroll")
         if scroll is not None:
             scroll.ensureWidgetVisible(self.backup_fields_container if visible else self.show_backups)
         QTimer.singleShot(0, lambda: self._keep_settings_geometry())
 
     def _keep_settings_geometry(self) -> None:
-        # Re-assert the current size after Qt relayout without changing it.
         size = self.size()
         self.resize(size)
 
@@ -334,17 +346,97 @@ class SetupDialog(QDialog):
             else: self.local_status.setText("Local AI: not available. Cloud AI will be used automatically.")
         except Exception as exc:
             self.local_status.setText(f"Local AI: unavailable — {exc}\nCloud AI will be used automatically.")
-            if show_message: QMessageBox.information(self, "Local AI unavailable", str(exc))
+            if show_message: self._show_local_error("Local AI unavailable", str(exc))
+
+    @staticmethod
+    def _show_local_error(title: str, message: str) -> None:
+        box = QMessageBox()
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle(title)
+        box.setText(message)
+        box.setStandardButtons(QMessageBox.Ok)
+        box.setStyleSheet("""
+            QMessageBox { background: #121620; color: #F1F5F9; }
+            QMessageBox QLabel { color: #EAF0F8; background: transparent; }
+            QMessageBox QPushButton { color: #FFFFFF; background: #2A3346; border: 1px solid #53617A; border-radius: 7px; padding: 8px 18px; min-width: 70px; }
+            QMessageBox QPushButton:hover { background: #3A4963; }
+        """)
+        box.exec()
+
+    @staticmethod
+    def _format_bytes(value: int) -> str:
+        size = float(max(0, value))
+        for unit in ("B", "MB", "GB"):
+            if size < 1024 or unit == "GB":
+                return f"{size:.1f} {unit}" if unit != "B" else f"{int(size)} B"
+            size /= 1024
+        return f"{size:.1f} GB"
 
     def _install_local_model(self) -> None:
         engine = self._local_engine_from_form()
-        if not engine.ollama_executable: QMessageBox.information(self, "Ollama required", "Ollama was not detected. Install Ollama, then use Install model again."); return
-        if self._local_installer is not None and self._local_installer.isRunning(): return
-        self.local_install.setEnabled(False); self.local_check.setEnabled(False); self.local_status.setText(f"Installing {engine.model} with Ollama…")
-        self._local_installer = _LocalInstaller(engine, engine.model); self._local_installer.completed.connect(self._local_install_done); self._local_installer.failed.connect(self._local_install_failed); self._local_installer.finished.connect(self._local_installer.deleteLater); self._local_installer.start()
+        if not engine.ollama_executable:
+            self._show_local_error("Ollama required", "Ollama was not detected. Install Ollama, then use Install model again.")
+            return
+        if self._local_installer is not None and self._local_installer.isRunning():
+            return
+        model = engine.model
+        self.local_install.setEnabled(False)
+        self.local_check.setEnabled(False)
+        self.local_progress.setVisible(True)
+        self.local_progress.setRange(0, 100)
+        self.local_progress.setValue(0)
+        self.local_install_status.setText(f"Starting download of {model}…")
+        self.local_status.setText(f"Local AI: downloading {model}. Keep this window open.")
+        self._local_installer = _LocalInstaller(engine, model)
+        self._local_installer.progress.connect(self._local_install_progress)
+        self._local_installer.completed.connect(self._local_install_done)
+        self._local_installer.failed.connect(self._local_install_failed)
+        self._local_installer.finished.connect(self._local_installer.deleteLater)
+        self._local_installer.start()
 
-    def _local_install_done(self, message: str) -> None: self._check_local_ai(show_message=False); self.local_install.setEnabled(self.local_enabled.isChecked()); self.local_check.setEnabled(self.local_enabled.isChecked()); QMessageBox.information(self, "Local AI ready", f"The local model is installed.\n\n{message}")
-    def _local_install_failed(self, message: str) -> None: self.local_install.setEnabled(self.local_enabled.isChecked()); self.local_check.setEnabled(self.local_enabled.isChecked()); QMessageBox.warning(self, "Local AI setup", message)
+    def _local_install_progress(self, status: str, completed: int, total: int) -> None:
+        status_lower = status.lower()
+        if total > 0:
+            percent = max(0, min(100, int((completed / total) * 100)))
+            self.local_progress.setRange(0, 100)
+            self.local_progress.setValue(percent)
+            self.local_install_status.setText(f"{status} — {percent}% ({self._format_bytes(completed)} / {self._format_bytes(total)})")
+        else:
+            self.local_progress.setRange(0, 0)
+            self.local_install_status.setText(status or "Working…")
+        if "pull" in status_lower or "download" in status_lower or "writing" in status_lower or "verif" in status_lower:
+            self.local_status.setText(f"Local AI: {status or 'working…'}")
+
+    def _local_install_done(self, message: str) -> None:
+        self.local_progress.setRange(0, 100)
+        self.local_progress.setValue(100)
+        self.local_install_status.setText("Download complete. Verifying local model…")
+        self.local_status.setText(f"Local AI: {self.local_model.text().strip()} installed. Checking availability…")
+        self._check_local_ai(show_message=False)
+        self.local_install.setEnabled(self.local_enabled.isChecked())
+        self.local_check.setEnabled(self.local_enabled.isChecked())
+        self.local_progress.setVisible(False)
+        self.local_install_status.setText("✓ Model installed and ready")
+        box = QMessageBox()
+        box.setIcon(QMessageBox.Information)
+        box.setWindowTitle("Local AI ready")
+        box.setText(f"The local model is installed and ready.\n\n{message}")
+        box.setStandardButtons(QMessageBox.Ok)
+        box.setStyleSheet("""
+            QMessageBox { background: #121620; color: #F1F5F9; }
+            QMessageBox QLabel { color: #EAF0F8; background: transparent; }
+            QMessageBox QPushButton { color: #FFFFFF; background: #2A3346; border: 1px solid #53617A; border-radius: 7px; padding: 8px 18px; min-width: 70px; }
+            QMessageBox QPushButton:hover { background: #3A4963; }
+        """)
+        box.exec()
+
+    def _local_install_failed(self, message: str) -> None:
+        self.local_progress.setVisible(False)
+        self.local_install_status.setText("Installation failed — see the error message.")
+        self.local_status.setText("Local AI: installation failed. The existing local AI setup was not changed.")
+        self.local_install.setEnabled(self.local_enabled.isChecked())
+        self.local_check.setEnabled(self.local_enabled.isChecked())
+        self._show_local_error("Ollama could not install the model", message)
 
     def _provider_for_form(self) -> AIProvider:
         provider = AIProvider(); provider.provider = self.provider.text().strip(); provider.api_key = self.api_key.text().strip(); provider.api_keys = [provider.api_key] if provider.api_key else []
