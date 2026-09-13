@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import re
 import os
+import re
 
 from app.ai.provider import AIProvider, AIProviderError
 from app.ai.router import SmartAIRouter
@@ -98,6 +98,11 @@ class CommandAgent:
                 mode="procedure_found",
             )
 
+        # Gmail UI commands should use visual computer control when the user is
+        # asking to manipulate the Gmail web interface rather than the Gmail API.
+        # This intentionally runs before the deterministic Windows router because
+        # phrases such as "open starred on my Gmail" contain the generic word
+        # "open" but are not Windows app-launch requests.
         if self._looks_like_gmail_ui_task(lowered):
             try:
                 result = self.vision.run(command, progress=on_status)
@@ -365,5 +370,100 @@ class CommandAgent:
                 state = f"Cooldown: {row['cooldown_seconds']}s"
             else:
                 state = "Available" if row["last_status"] != "error" else "Error"
-            rows.append(f"{provider}: {state}")
-        return "\n".join(rows)
+            rows.append(f"• {provider}: {state}")
+        return "AI provider status\n\n" + "\n".join(rows)
+
+    @staticmethod
+    def _friendly_ai_error(error: str) -> str:
+        text = error.casefold()
+        if "429" in text or "quota" in text or "resource_exhausted" in text or "rate limit" in text:
+            return "The preferred AI provider has reached its quota or rate limit, and no other configured provider was available. Add a backup provider or enable Local AI in Settings."
+        return error
+
+    def _handle_memory_query(self, text: str) -> AgentResponse | None:
+        if "history" in text or "what did i ask" in text:
+            interactions = self.memory.recent(8)
+            if not interactions: return AgentResponse("I do not have any saved interaction history yet.", mode="memory")
+            lines = ["Recent local memory", ""]
+            for item in interactions: lines.extend((f"• {item.command or '(empty command)'}", f"  {item.mode}: {item.response.splitlines()[0]}"))
+            return AgentResponse("\n".join(lines), mode="memory")
+        if "usage" in text or "analytics" in text or "stats" in text:
+            counts = self.memory.mode_counts(); lines = [f"Local usage: {self.memory.count()} interaction(s)", ""]
+            for mode, count in counts.items(): lines.append(f"{mode}: {count}")
+            return AgentResponse("\n".join(lines), mode="analytics")
+        return None
+
+    @staticmethod
+    def _looks_like_inbox_organization(text: str) -> bool:
+        return any(word in text for word in ("organize", "categorize", "categorise", "classify", "summarize", "analyse", "analyze")) and "inbox" in text
+
+    @staticmethod
+    def _looks_like_gmail_search(text: str) -> bool:
+        return any(word in text for word in ("gmail", "email", "emails", "inbox")) and any(word in text for word in ("show", "find", "search", "list", "unread", "recent"))
+
+    @staticmethod
+    def _looks_like_mutation(text: str) -> bool:
+        return any(word in text for word in ("archive", "label", "move to")) and any(word in text for word in ("email", "emails", "gmail", "message", "inbox"))
+
+    def _plan_mutation(self, command: str) -> AgentResponse:
+        connection_error = self._connect()
+        if connection_error: return connection_error
+        query = self._to_gmail_query(command)
+        try: messages = self.gmail.list_messages(query=query, max_results=10)
+        except Exception as exc: return AgentResponse(f"Gmail lookup failed.\n\n{exc}", mode="gmail_error")
+        if not messages: return AgentResponse("No messages matched the request, so there is nothing to change.", mode="gmail")
+        ids = [message.id for message in messages]
+        if "archive" in command.casefold(): action = self.actions.plan_archive(ids)
+        else:
+            match = re.search(r"(?:label|move to)\s+['\"]?([^'\"]+)['\"]?$", command, flags=re.IGNORECASE)
+            label_name = match.group(1).strip() if match else "Organized"
+            action = self.actions.plan_label(ids, label_name)
+        return AgentResponse("Confirmation required\n\n" + action.description + "\n\nNothing has been changed yet.", mode="confirmation", pending_action=action)
+
+    def confirm_action(self, action: object, confirmed: bool) -> AgentResponse:
+        if not confirmed: return AgentResponse("Action cancelled. Your Gmail was not changed.", mode="cancelled")
+        completed = self.actions.execute_confirmed(action, confirmed=True)
+        return AgentResponse(f"Done. {completed} Gmail message(s) were updated.", mode="gmail_action")
+
+    def _connect(self) -> AgentResponse | None:
+        if self.gmail.is_connected: return None
+        try: self.gmail.connect()
+        except Exception as exc: return AgentResponse("Gmail is not connected yet.\n\nConnection setup: " + str(exc) + "\n\nOpen Settings to configure Gmail, then run the command again.", mode="gmail_setup")
+        return None
+
+    def _handle_inbox_organization(self) -> AgentResponse:
+        connection_error = self._connect()
+        if connection_error: return connection_error
+        try:
+            messages = self.gmail.list_messages(query="", max_results=20)
+            from app.ai.classifier import InboxClassifier
+            classifier = InboxClassifier(); classified = classifier.classify(messages)
+            return AgentResponse(classifier.summarize(classified), mode="classification")
+        except Exception as exc: return AgentResponse(f"Inbox analysis failed.\n\n{exc}", mode="gmail_error")
+
+    def _handle_gmail_search(self, command: str) -> AgentResponse:
+        connection_error = self._connect()
+        if connection_error: return connection_error
+        query = self._to_gmail_query(command)
+        try: messages = self.gmail.list_messages(query=query, max_results=10)
+        except Exception as exc: return AgentResponse(f"Gmail search failed.\n\n{exc}", mode="gmail_error")
+        if not messages: return AgentResponse("No matching Gmail messages were found.", mode="gmail")
+        lines = [f"Found {len(messages)} message(s):", ""]
+        for index, message in enumerate(messages, start=1): lines.extend((f"{index}. {message.subject}", f"   From: {message.sender}", f"   {message.snippet}"))
+        return AgentResponse("\n".join(lines), mode="gmail")
+
+    def _local_response_from_search(self, command: str) -> AgentResponse:
+        context = self.retriever.context(command, limit=5)
+        if context:
+            text = context.replace("Relevant local information:\n\n", "").replace("Relevant local knowledge:\n\n", "")
+            return AgentResponse("I found relevant local information:\n\n" + text, mode="local_search")
+        return AgentResponse("I don't have enough local information to answer that yet. Configure an AI provider or save some local knowledge first.", mode="demo")
+
+    @staticmethod
+    def _to_gmail_query(command: str) -> str:
+        text = command.casefold(); queries: list[str] = []
+        if "unread" in text: queries.append("is:unread")
+        if "starred" in text: queries.append("is:starred")
+        sender = re.search(r"from\s+([\w.+-]+@[\w.-]+)", text)
+        if sender: queries.append(f"from:{sender.group(1)}")
+        return " ".join(queries)
