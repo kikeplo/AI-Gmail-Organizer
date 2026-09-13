@@ -21,7 +21,9 @@ class LocalAIEngine:
     """Local AI client with first-class Ollama support and OpenAI-compatible fallback."""
 
     DEFAULT_BASE_URL = "http://localhost:11434/v1"
-    DEFAULT_MODEL = "qwen3:4b"
+    DEFAULT_MODEL = "qwen3:1.7b"
+    FAST_MODEL = "qwen3:1.7b"
+    QUALITY_MODEL = "qwen3:4b"
     DEFAULT_KEEP_ALIVE = "30m"
     DEFAULT_NUM_CTX = 4096
 
@@ -88,6 +90,9 @@ class LocalAIEngine:
         models = self.list_models()
         if self.model and self.model in models:
             return self.model
+        for preferred in (self.FAST_MODEL, self.QUALITY_MODEL):
+            if preferred in models:
+                return preferred
         blocked = ("embedding", "moderation", "image", "audio", "tts", "whisper")
         for model in models:
             if not any(token in model.lower() for token in blocked):
@@ -109,14 +114,17 @@ class LocalAIEngine:
         except (TypeError, ValueError):
             return self.DEFAULT_NUM_CTX
 
+    def _max_tokens(self) -> int:
+        try:
+            return max(32, min(int(os.getenv("LOCAL_AI_MAX_TOKENS", "192")), 1024))
+        except (TypeError, ValueError):
+            return 192
+
     def _request_options(self) -> dict[str, object]:
         """Return Ollama generation controls tuned for responsive desktop use."""
         if not self.is_ollama_endpoint:
             return {}
-        return {
-            "num_ctx": self._num_ctx(),
-            "temperature": 0.2,
-        }
+        return {"num_ctx": self._num_ctx(), "temperature": 0.2, "num_predict": self._max_tokens()}
 
     def chat(self, prompt: str, system: str = "") -> str:
         if not self.enabled:
@@ -127,14 +135,7 @@ class LocalAIEngine:
             {"role": "user", "content": prompt},
         ]
         if self.is_ollama_endpoint:
-            body = {
-                "model": model,
-                "messages": messages,
-                "stream": False,
-                "think": self._thinking_enabled(),
-                "keep_alive": self._keep_alive(),
-                "options": self._request_options(),
-            }
+            body = {"model": model, "messages": messages, "stream": False, "think": self._thinking_enabled(), "keep_alive": self._keep_alive(), "options": self._request_options()}
             data = self._request("POST", f"{self.ollama_base_url}/api/chat", body)
             try:
                 message = data["message"]
@@ -159,17 +160,7 @@ class LocalAIEngine:
             raise LocalAIError("Local AI is disabled.")
         encoded = base64.b64encode(self._image_bytes(image)).decode("ascii")
         if self.is_ollama_endpoint:
-            body = {
-                "model": self.resolve_model(),
-                "messages": [
-                    {"role": "system", "content": "Return only valid JSON."},
-                    {"role": "user", "content": prompt, "images": [encoded]},
-                ],
-                "stream": False,
-                "think": self._thinking_enabled(),
-                "keep_alive": self._keep_alive(),
-                "options": self._request_options(),
-            }
+            body = {"model": self.resolve_model(), "messages": [{"role": "system", "content": "Return only valid JSON."}, {"role": "user", "content": prompt, "images": [encoded]}], "stream": False, "think": self._thinking_enabled(), "keep_alive": self._keep_alive(), "options": self._request_options()}
             data = self._request("POST", f"{self.ollama_base_url}/api/chat", body)
             try:
                 raw = str(data["message"]["content"]).strip()
