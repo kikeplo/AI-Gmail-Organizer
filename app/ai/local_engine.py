@@ -19,12 +19,14 @@ class LocalAIError(RuntimeError):
 
 
 class LocalAIEngine:
-    """Local AI client with first-class Ollama support and OpenAI-compatible fallback."""
+    """Local AI client with Ollama support, fast text, quality text, and vision routing."""
 
     DEFAULT_BASE_URL = "http://localhost:11434/v1"
     DEFAULT_MODEL = "qwen3:1.7b"
     FAST_MODEL = "qwen3:1.7b"
     QUALITY_MODEL = "qwen3:4b"
+    VISION_MODEL = "qwen3-vl:2b-instruct"
+    REQUIRED_OLLAMA_MODELS = (FAST_MODEL, QUALITY_MODEL, VISION_MODEL)
     DEFAULT_KEEP_ALIVE = "30m"
     DEFAULT_NUM_CTX = 4096
 
@@ -67,10 +69,12 @@ class LocalAIEngine:
         try:
             models = self.list_models()
             selected = self.model if self.model in models else (models[0] if models else "")
-            return {"enabled": True, "available": bool(models), "ollama_installed": bool(self.ollama_executable), "models": models, "model": selected, "reason": "Local AI is ready." if models else "No local models installed."}
+            missing = [name for name in self.REQUIRED_OLLAMA_MODELS if name not in models] if self.is_ollama_endpoint else []
+            reason = "Local AI is ready." if not missing else f"Missing local models: {', '.join(missing)}"
+            return {"enabled": True, "available": bool(models), "ollama_installed": bool(self.ollama_executable), "models": models, "model": selected, "missing_models": missing, "vision_model": self._find_installed_vision_model(models), "reason": reason}
         except Exception as exc:
             installed = bool(self.ollama_executable)
-            return {"enabled": True, "available": False, "ollama_installed": installed, "models": [], "model": self.model, "reason": str(exc) if installed or not self.is_ollama_endpoint else "Ollama is not installed or not running."}
+            return {"enabled": True, "available": False, "ollama_installed": installed, "models": [], "model": self.model, "missing_models": list(self.REQUIRED_OLLAMA_MODELS) if self.is_ollama_endpoint else [], "vision_model": "", "reason": str(exc) if installed or not self.is_ollama_endpoint else "Ollama is not installed or not running."}
 
     def available(self) -> bool:
         return bool(self.status()["available"])
@@ -86,6 +90,15 @@ class LocalAIEngine:
             raise LocalAIError("No local AI models were found. Install a model in your local AI runtime first.")
         return models
 
+    @classmethod
+    def _find_installed_vision_model(cls, models: list[str]) -> str:
+        if cls.VISION_MODEL in models:
+            return cls.VISION_MODEL
+        for model in models:
+            if model.startswith("qwen3-vl:"):
+                return model
+        return ""
+
     def resolve_model(self) -> str:
         models = self.list_models()
         if self.model and self.model in models:
@@ -93,11 +106,18 @@ class LocalAIEngine:
         for preferred in (self.FAST_MODEL, self.QUALITY_MODEL):
             if preferred in models:
                 return preferred
-        blocked = ("embedding", "moderation", "image", "audio", "tts", "whisper")
+        blocked = ("embedding", "moderation", "image", "audio", "tts", "whisper", "qwen3-vl")
         for model in models:
             if not any(token in model.lower() for token in blocked):
                 return model
-        return models[0]
+        raise LocalAIError("No suitable local text model is installed.")
+
+    def resolve_vision_model(self) -> str:
+        models = self.list_models()
+        selected = self._find_installed_vision_model(models)
+        if selected:
+            return selected
+        raise LocalAIError(f"No local vision model is installed. Install {self.VISION_MODEL} from Settings first.")
 
     def _thinking_enabled(self) -> bool:
         return os.getenv("LOCAL_AI_THINKING", "0").strip().lower() in {"1", "true", "yes", "on"}
@@ -120,10 +140,13 @@ class LocalAIEngine:
         except (TypeError, ValueError):
             return 192
 
-    def _request_options(self) -> dict[str, object]:
+    def _request_options(self, *, vision: bool = False) -> dict[str, object]:
         if not self.is_ollama_endpoint:
             return {}
-        return {"num_ctx": self._num_ctx(), "temperature": 0.2, "num_predict": self._max_tokens()}
+        ctx = self._num_ctx()
+        if vision:
+            ctx = max(ctx, 8192)
+        return {"num_ctx": ctx, "temperature": 0.2, "num_predict": self._max_tokens()}
 
     def chat(self, prompt: str, system: str = "") -> str:
         if not self.enabled:
@@ -157,15 +180,26 @@ class LocalAIEngine:
         if not self.enabled:
             raise LocalAIError("Local AI is disabled.")
         encoded = base64.b64encode(self._image_bytes(image)).decode("ascii")
+        model = self.resolve_vision_model() if self.is_ollama_endpoint else self.resolve_model()
         if self.is_ollama_endpoint:
-            body = {"model": self.resolve_model(), "messages": [{"role": "system", "content": "Return only valid JSON."}, {"role": "user", "content": prompt, "images": [encoded]}], "stream": False, "think": self._thinking_enabled(), "keep_alive": self._keep_alive(), "options": self._request_options()}
+            body = {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": "Return only valid JSON."},
+                    {"role": "user", "content": prompt, "images": [encoded]},
+                ],
+                "stream": False,
+                "think": self._thinking_enabled(),
+                "keep_alive": self._keep_alive(),
+                "options": self._request_options(vision=True),
+            }
             data = self._request("POST", f"{self.ollama_base_url}/api/chat", body)
             try:
                 raw = str(data["message"]["content"]).strip()
             except (KeyError, TypeError) as exc:
                 raise LocalAIError("The local vision model returned an unsupported response.") from exc
         else:
-            body = {"model": self.resolve_model(), "messages": [{"role": "system", "content": "Return only valid JSON."}, {"role": "user", "content": [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encoded}"}}]}], "stream": False}
+            body = {"model": model, "messages": [{"role": "system", "content": "Return only valid JSON."}, {"role": "user", "content": [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encoded}"}}]}], "stream": False}
             data = self._request("POST", f"{self.base_url}/chat/completions", body)
             try:
                 raw = str(data["choices"][0]["message"]["content"]).strip()
@@ -188,15 +222,9 @@ class LocalAIEngine:
                 return
         except (HTTPError, URLError, TimeoutError, OSError):
             pass
-
-        # Do NOT launch the ollama CLI from the GUI. On Windows the Ollama
-        # executable is the CLI; aliases such as Ollama.exe do not provide a
-        # separate graphical launcher. The desktop app/service should manage
-        # the server itself. Starting the CLI here can open a visible console.
         raise LocalAIError("Ollama is installed, but its local service is not running. Start Ollama from Windows, then click Install model again.")
 
     def _pull_ollama_model(self, model_name: str, progress_callback=None) -> str:
-        """Pull a model through Ollama's native HTTP API, reporting byte progress."""
         body = json.dumps({"name": model_name, "stream": True}).encode("utf-8")
         request = Request(
             f"{self.ollama_base_url}/api/pull",
@@ -242,17 +270,61 @@ class LocalAIEngine:
         except OSError as exc:
             raise LocalAIError(f"Could not communicate with Ollama while installing {model_name}: {exc}") from exc
 
+    def install_models(self, models: tuple[str, ...] | None = None, progress_callback=None) -> str:
+        """Install all required local models for text, quality, and visual desktop tasks."""
+        targets = models or self.REQUIRED_OLLAMA_MODELS
+        executable = self.ollama_executable
+        if not executable:
+            raise LocalAIError("Ollama is not installed. Install Ollama, then use this button again.")
+        self._ensure_ollama_server(executable)
+        if not self.is_ollama_endpoint:
+            raise LocalAIError("Installing the bundled local models requires an Ollama endpoint at localhost:11434.")
+
+        installed: list[str] = []
+        existing = set(self.list_models()) if self._server_is_available() else set()
+        for index, model_name in enumerate(targets, 1):
+            if model_name in existing:
+                if progress_callback is not None:
+                    progress_callback(f"Already installed: {model_name} ({index}/{len(targets)})", 0, 0)
+                installed.append(model_name)
+                continue
+            if progress_callback is not None:
+                progress_callback(f"Starting download: {model_name} ({index}/{len(targets)})", 0, 0)
+
+            def report(status: str, completed: int, total: int, model=model_name, idx=index) -> None:
+                label = f"{model} ({idx}/{len(targets)}) — {status}"
+                if progress_callback is not None:
+                    progress_callback(label, completed, total)
+
+            self._pull_ollama_model(model_name, progress_callback=report)
+            installed.append(model_name)
+
+        if progress_callback is not None:
+            progress_callback("All required local models are installed.", 0, 0)
+        return "Installed: " + ", ".join(installed)
+
     def install_model(self, model: str | None = None, progress_callback=None) -> str:
+        """Backward-compatible installer; Settings now installs the full local bundle."""
+        if self.is_ollama_endpoint:
+            requested = (model or "").strip()
+            if requested and requested not in self.REQUIRED_OLLAMA_MODELS:
+                return self.install_models((requested,), progress_callback=progress_callback)
+            return self.install_models(progress_callback=progress_callback)
         model_name = (model or self.model or self.DEFAULT_MODEL).strip()
         if not model_name:
             raise LocalAIError("Enter a local model name first.")
         executable = self.ollama_executable
         if not executable:
             raise LocalAIError("Ollama is not installed. Install Ollama, then use this button again.")
-        self._ensure_ollama_server(executable)
-        if not self.is_ollama_endpoint:
-            raise LocalAIError("Model installation from Settings currently requires an Ollama endpoint (localhost:11434).")
-        return self._pull_ollama_model(model_name, progress_callback=progress_callback)
+        raise LocalAIError("The bundled local model installer requires Ollama at localhost:11434.")
+
+    def _server_is_available(self) -> bool:
+        try:
+            request = Request(f"{self.ollama_base_url}/api/tags", headers={"Accept": "application/json"}, method="GET")
+            with urlopen(request, timeout=1.5):
+                return True
+        except (HTTPError, URLError, TimeoutError, OSError):
+            return False
 
     @staticmethod
     def _image_bytes(image) -> bytes:
