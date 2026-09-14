@@ -189,31 +189,11 @@ class LocalAIEngine:
         except (HTTPError, URLError, TimeoutError, OSError):
             pass
 
-        # Prefer the Ollama desktop application/tray process. Do not run
-        # `ollama serve` here: that CLI path can create a visible console.
-        gui_candidates = [
-            Path(executable).with_name("Ollama.exe"),
-            Path(os.getenv("LOCALAPPDATA", "")) / "Programs" / "Ollama" / "Ollama.exe" if os.getenv("LOCALAPPDATA") else None,
-        ]
-        gui = next((path for path in gui_candidates if path and path.is_file()), None)
-        if gui is None:
-            raise LocalAIError("Ollama is installed but its local service is not running. Start the Ollama desktop app, then click Install model again.")
-        try:
-            flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-            subprocess.Popen([str(gui)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=flags, close_fds=True)
-        except OSError as exc:
-            raise LocalAIError(f"Could not start the Ollama desktop app: {exc}") from exc
-
-        last_error = "Ollama did not become available."
-        for _ in range(40):
-            try:
-                request = Request(f"{self.ollama_base_url}/api/tags", headers={"Accept": "application/json"}, method="GET")
-                with urlopen(request, timeout=0.75):
-                    return
-            except (HTTPError, URLError, TimeoutError, OSError) as exc:
-                last_error = str(exc)
-            time.sleep(0.25)
-        raise LocalAIError(f"Ollama desktop app started, but the local service did not become available. {last_error}")
+        # Do NOT launch the ollama CLI from the GUI. On Windows the Ollama
+        # executable is the CLI; aliases such as Ollama.exe do not provide a
+        # separate graphical launcher. The desktop app/service should manage
+        # the server itself. Starting the CLI here can open a visible console.
+        raise LocalAIError("Ollama is installed, but its local service is not running. Start Ollama from Windows, then click Install model again.")
 
     def _pull_ollama_model(self, model_name: str, progress_callback=None) -> str:
         """Pull a model through Ollama's native HTTP API, reporting byte progress."""
