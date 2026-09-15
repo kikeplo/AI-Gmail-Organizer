@@ -40,12 +40,16 @@ class VisionAgent:
         self.max_steps = 12
         self._stopped = False
         self._paused = False
+        self._run_generation = 0
         self.last_steps: list[dict] = []
         self.last_goal: str = ""
         self._screenshot_size: tuple[int, int] | None = None
 
     def stop(self) -> None:
+        # Invalidate the current visual run immediately. Any in-flight model
+        # result is ignored when it returns and must not execute an action.
         self._stopped = True
+        self._run_generation += 1
 
     def pause(self) -> None:
         self._paused = True
@@ -61,6 +65,9 @@ class VisionAgent:
         """Local Windows automation is enabled without an in-app permission dialog."""
         return
 
+    def _active(self, generation: int) -> bool:
+        return not self._stopped and generation == self._run_generation
+
     def run(self, goal: str, progress=None) -> VisionResult:
         if not self.router.cloud.configured and not self.router.local.available():
             raise VisionAgentError("Configure a vision-capable AI provider or install a local vision model first.")
@@ -69,22 +76,39 @@ class VisionAgent:
         self.ensure_access()
 
         self._stopped = False
+        self._paused = False
+        self._run_generation += 1
+        generation = self._run_generation
         self.last_steps = []
         self.last_goal = goal.strip()
         explicit_single_click = bool(re.match(r"^\s*(?:click|double[- ]click|right[- ]click)\b", goal, re.IGNORECASE))
         recent_actions: list[str] = []
 
         for step in range(1, self.max_steps + 1):
-            if self._stopped:
+            if not self._active(generation):
                 return VisionResult("Task stopped. No further desktop actions were taken.", stopped=True, steps=list(self.last_steps))
-            while self._paused and not self._stopped:
+            while self._paused and self._active(generation):
                 time.sleep(0.1)
-            if self._stopped:
+            if not self._active(generation):
                 return VisionResult("Task stopped.", stopped=True, steps=list(self.last_steps))
 
+            if progress:
+                progress(f"Step {step}/{self.max_steps}: capturing screen…")
             image = self.tools.screenshot()
             self._screenshot_size = tuple(int(value) for value in image.size)
+            if not self._active(generation):
+                return VisionResult("Task stopped. The screenshot was not acted on.", stopped=True, steps=list(self.last_steps))
+
+            if progress:
+                progress(f"Step {step}/{self.max_steps}: analyzing target…")
             decision = self._decide(goal, image)
+
+            # This check is deliberately AFTER the potentially long model call.
+            # Pressing Stop while the model is thinking therefore prevents a
+            # late model response from reaching mouse/keyboard execution.
+            if not self._active(generation):
+                return VisionResult("Task stopped. The pending AI decision was discarded.", stopped=True, steps=list(self.last_steps))
+
             action = str(decision.get("action", "done")).casefold()
             message = str(decision.get("message", ""))
 
@@ -98,7 +122,11 @@ class VisionAgent:
             recent_actions.append(action_key)
 
             if action in {"click", "double_click", "right_click"} and self._needs_target_verification(decision):
+                if progress:
+                    progress(f"Step {step}/{self.max_steps}: verifying click target…")
                 verified = self._verify_click_target(goal, image, decision)
+                if not self._active(generation):
+                    return VisionResult("Task stopped. The pending verification was discarded.", stopped=True, steps=list(self.last_steps))
                 if verified is None:
                     return VisionResult(
                         "I could not confidently locate the requested target, so I did not click.",
@@ -110,11 +138,16 @@ class VisionAgent:
 
             self.last_steps.append(self._safe_step_record(action, decision, message))
             if progress:
-                progress(f"Step {step}: {message or action}")
+                progress(f"Step {step}/{self.max_steps}: {message or action}")
             if action == "done":
                 return VisionResult(message or "Task completed.", steps=list(self.last_steps))
             if action == "wait":
-                time.sleep(min(max(float(decision.get("seconds", 1)), 0.2), 5.0))
+                remaining = min(max(float(decision.get("seconds", 1)), 0.2), 5.0)
+                started = time.monotonic()
+                while time.monotonic() - started < remaining:
+                    if not self._active(generation):
+                        return VisionResult("Task stopped.", stopped=True, steps=list(self.last_steps))
+                    time.sleep(min(0.1, remaining))
                 continue
             if self.permissions.requires_confirmation(action):
                 return VisionResult(
@@ -122,11 +155,15 @@ class VisionAgent:
                     needs_confirmation=True,
                     steps=list(self.last_steps),
                 )
+
+            # Final cancellation guard immediately before touching the desktop.
+            if not self._active(generation):
+                return VisionResult("Task stopped. No desktop action was executed.", stopped=True, steps=list(self.last_steps))
+            if progress:
+                progress(f"Step {step}/{self.max_steps}: executing {action}…")
             self._execute_action(action, decision)
 
             if explicit_single_click and action in {"click", "double_click", "right_click"}:
-                # Fast path: explicit clicks finish after execution. A model can
-                # request an extra verification pass explicitly when confidence is low.
                 return VisionResult(
                     message or f"Completed: {goal.strip()}",
                     steps=list(self.last_steps),
@@ -249,7 +286,7 @@ class VisionAgent:
             "Verify a proposed desktop click target. Return ONLY valid JSON.\n"
             "Goal: " + goal + "\n"
             f"The proposed click point is ({round(candidate[0])}, {round(candidate[1])}) in screenshot pixels and is marked by a red crosshair.\n"
-            'Return exactly: {"approved": true/false, "x": number, "y": number, "message": "..."}.\n'
+            '{"approved": true/false, "x": number, "y": number, "message": "..."}.\n'
             "Approve only when the point is safely inside the requested target. If slightly wrong, return a corrected point inside the clickable area."
         )
         result = self._vision_json(annotated, prompt)
