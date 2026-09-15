@@ -136,9 +136,9 @@ class LocalAIEngine:
 
     def _max_tokens(self) -> int:
         try:
-            return max(32, min(int(os.getenv("LOCAL_AI_MAX_TOKENS", "192")), 1024))
+            return max(32, min(int(os.getenv("LOCAL_AI_MAX_TOKENS", "128")), 512))
         except (TypeError, ValueError):
-            return 192
+            return 128
 
     def _request_options(self, *, vision: bool = False) -> dict[str, object]:
         if not self.is_ollama_endpoint:
@@ -193,7 +193,7 @@ class LocalAIEngine:
                 "keep_alive": self._keep_alive(),
                 "options": self._request_options(vision=True),
             }
-            data = self._request("POST", f"{self.ollama_base_url}/api/chat", body)
+            data = self._request("POST", f"{self.ollama_base_url}/api/chat", body, timeout_seconds=180)
             try:
                 raw = str(data["message"]["content"]).strip()
             except (KeyError, TypeError) as exc:
@@ -204,7 +204,7 @@ class LocalAIEngine:
             try:
                 raw = str(data["choices"][0]["message"]["content"]).strip()
             except (KeyError, IndexError, TypeError) as exc:
-                raise LocalAIError("The local vision model returned an unsupported response.") from exc
+                raise LocalAIError("The local vision model returned an unsupported response format.") from exc
         raw = raw.replace("```json", "").replace("```", "").strip()
         try:
             result = json.loads(raw)
@@ -298,6 +298,7 @@ class LocalAIEngine:
 
             self._pull_ollama_model(model_name, progress_callback=report)
             installed.append(model_name)
+            existing.add(model_name)
 
         if progress_callback is not None:
             progress_callback("All required local models are installed.", 0, 0)
@@ -332,14 +333,15 @@ class LocalAIEngine:
         image.save(buffer, format="PNG")
         return buffer.getvalue()
 
-    def _request(self, method: str, url: str, body: dict | None = None) -> dict:
+    def _request(self, method: str, url: str, body: dict | None = None, timeout_seconds: float | None = None) -> dict:
         data = json.dumps(body).encode("utf-8") if body is not None else None
         headers = {"Accept": "application/json"}
         if body is not None:
             headers["Content-Type"] = "application/json"
         request = Request(url, data=data, headers=headers, method=method)
+        timeout = timeout_seconds if timeout_seconds is not None else (4 if body is None else 45)
         try:
-            with urlopen(request, timeout=4 if body is None else 45) as response:
+            with urlopen(request, timeout=timeout) as response:
                 raw = response.read().decode("utf-8")
                 return json.loads(raw) if raw else {}
         except HTTPError as exc:
