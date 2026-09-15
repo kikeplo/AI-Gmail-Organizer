@@ -9,6 +9,8 @@ import re
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from PIL import Image
+
 from app.agent.access import AccessManager
 from app.ai.provider import AIProvider, AIProviderError
 from app.windows.tools import WindowsTools
@@ -31,6 +33,8 @@ class VisionResult:
 class VisionAgent:
     """Use a vision-capable model to operate the local Windows desktop iteratively."""
 
+    MAX_VISION_EDGE = 1280
+
     def __init__(self, provider: Any | None = None, tools: WindowsTools | None = None, access: AccessManager | None = None) -> None:
         self.provider = provider or AIProvider()
         self.tools = tools or WindowsTools()
@@ -39,6 +43,8 @@ class VisionAgent:
         self.pause_requested = False
         self.last_goal: str | None = None
         self.last_steps: tuple[VisionStep, ...] = ()
+        self._screen_scale_x = 1.0
+        self._screen_scale_y = 1.0
 
     def stop(self) -> None:
         self.stop_requested = True
@@ -85,11 +91,23 @@ class VisionAgent:
                 on_status(f"Looking at the screen ({step_number}/{max_steps})…")
 
             image = self.tools.screenshot()
+            original_width, original_height = image.size
+            vision_image = self._prepare_vision_image(image)
+            vision_width, vision_height = vision_image.size
+            self._screen_scale_x = original_width / vision_width if vision_width else 1.0
+            self._screen_scale_y = original_height / vision_height if vision_height else 1.0
+
+            if on_status:
+                if (vision_width, vision_height) != (original_width, original_height):
+                    on_status(f"Screenshot captured. Analyzing a {vision_width}×{vision_height} view for faster local inference…")
+                else:
+                    on_status("Screenshot captured. Analyzing the screen with local vision…")
+
             image_buffer = io.BytesIO()
-            image.save(image_buffer, format="PNG")
+            vision_image.save(image_buffer, format="PNG", optimize=True)
             encoded = base64.b64encode(image_buffer.getvalue()).decode("ascii")
 
-            prompt = self._planning_prompt(goal, step_number, max_steps)
+            prompt = self._planning_prompt(goal, step_number, max_steps, vision_width, vision_height)
             raw = self._vision_request(prompt, encoded)
             decision = self._parse_decision(raw)
 
@@ -112,6 +130,8 @@ class VisionAgent:
                     needs_confirmation=True,
                 )
 
+            if on_status:
+                on_status(f"Target identified. Executing {action_name.replace('_', ' ')}…")
             detail = self._execute_action(action)
             steps.append(VisionStep(action_name, detail))
             self.last_steps = tuple(steps)
@@ -120,6 +140,16 @@ class VisionAgent:
 
         self.last_steps = tuple(steps)
         return VisionResult("I reached the visual task step limit without confidently completing the task.", tuple(steps))
+
+    def _prepare_vision_image(self, image: Image.Image) -> Image.Image:
+        """Downscale large screenshots for faster local VLM inference while preserving aspect ratio."""
+        width, height = image.size
+        longest = max(width, height)
+        if longest <= self.MAX_VISION_EDGE:
+            return image
+        scale = self.MAX_VISION_EDGE / float(longest)
+        target = (max(1, int(round(width * scale))), max(1, int(round(height * scale))))
+        return image.resize(target, Image.Resampling.LANCZOS)
 
     def _vision_request(self, prompt: str, image_base64: str) -> dict | str:
         vision_json = getattr(self.provider, "vision_json", None)
@@ -136,25 +166,29 @@ class VisionAgent:
             "You are the visual computer-use controller for a Windows desktop assistant. "
             "Inspect the screenshot carefully and choose exactly one next action. "
             "Never invent coordinates when the target is not visible. Prefer visible UI targets. "
+            "For clicks, prefer returning a bbox_2d [x1,y1,x2,y2] around the complete visible target; "
+            "the controller will click the center of the box. Only use x,y when a bounding box is not practical. "
             "Return ONLY JSON with keys done, message, and action. "
             "When done is true, action must be null. Otherwise action must contain type and only the parameters needed."
         )
 
     @staticmethod
-    def _planning_prompt(goal: str, step: int, max_steps: int) -> str:
+    def _planning_prompt(goal: str, step: int, max_steps: int, image_width: int, image_height: int) -> str:
         return (
             f"User goal: {goal}\n"
-            f"This is visual step {step} of at most {max_steps}.\n\n"
+            f"This is visual step {step} of at most {max_steps}.\n"
+            f"The screenshot supplied to you is {image_width}×{image_height} pixels. Coordinates and bounding boxes refer to this screenshot.\n\n"
             "Available actions:\n"
-            "click {x,y}\n"
-            "double_click {x,y}\n"
-            "right_click {x,y}\n"
+            "click {bbox_2d:[x1,y1,x2,y2]} preferred, or click {x,y}\n"
+            "double_click {bbox_2d:[x1,y1,x2,y2]} preferred, or double_click {x,y}\n"
+            "right_click {bbox_2d:[x1,y1,x2,y2]} preferred, or right_click {x,y}\n"
             "move {x,y}\n"
             "scroll {amount}\n"
             "type {text}\n"
             "press {key}\n"
             "hotkey {keys:[...]}\n"
             "wait {seconds}\n\n"
+            "For a visible button, tab, link, icon, checkbox, or menu item, box the entire target rather than estimating a single point. "
             "After the action, the next screenshot will be available."
         )
 
@@ -173,17 +207,30 @@ class VisionAgent:
             raise AIProviderError("The vision model returned an invalid decision format.")
         return parsed
 
+    def _scaled_point(self, x: float, y: float) -> tuple[int, int]:
+        return round(x * self._screen_scale_x), round(y * self._screen_scale_y)
+
     def _execute_action(self, action: dict) -> str:
         action_name = str(action.get("type", "")).strip().lower()
         if action_name in {"click", "double_click", "right_click", "move", "scroll", "type", "press", "hotkey"} and not self.access.is_allowed("input"):
             raise AIProviderError("Mouse & keyboard access is no longer enabled. Open Settings and allow it before continuing.")
         if action_name in {"click", "double_click", "right_click", "move"}:
-            x = int(action["x"]); y = int(action["y"])
-            if action_name == "click": self.tools.click(x, y)
-            elif action_name == "double_click": self.tools.double_click(x, y)
-            elif action_name == "right_click": self.tools.click(x, y, button="right")
-            else: self.tools.move_mouse(x, y)
-            return f"{action_name.replace('_', ' ').title()} at ({x}, {y})."
+            bbox = action.get("bbox_2d")
+            if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
+                try:
+                    x1, y1, x2, y2 = [float(value) for value in bbox]
+                    x = (x1 + x2) / 2.0
+                    y = (y1 + y2) / 2.0
+                except (TypeError, ValueError):
+                    bbox = None
+            if bbox is None:
+                x = float(action["x"]); y = float(action["y"])
+            screen_x, screen_y = self._scaled_point(x, y)
+            if action_name == "click": self.tools.click(screen_x, screen_y)
+            elif action_name == "double_click": self.tools.double_click(screen_x, screen_y)
+            elif action_name == "right_click": self.tools.click(screen_x, screen_y, button="right")
+            else: self.tools.move_mouse(screen_x, screen_y)
+            return f"{action_name.replace('_', ' ').title()} at ({screen_x}, {screen_y})."
         if action_name == "scroll":
             amount = int(action.get("amount", -5)); self.tools.scroll(amount); return f"Scrolled {amount}."
         if action_name == "type":
