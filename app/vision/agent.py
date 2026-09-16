@@ -44,6 +44,7 @@ class VisionAgent:
         self.last_steps: list[dict] = []
         self.last_goal: str = ""
         self._screenshot_size: tuple[int, int] | None = None
+        self._model_image_size: tuple[int, int] | None = None
 
     def stop(self) -> None:
         # Invalidate the current visual run immediately. Any in-flight model
@@ -96,6 +97,7 @@ class VisionAgent:
                 progress(f"Step {step}/{self.max_steps}: capturing screen…")
             image = self.tools.screenshot()
             self._screenshot_size = tuple(int(value) for value in image.size)
+            self._model_image_size = None
             if not self._active(generation):
                 return VisionResult("Task stopped. The screenshot was not acted on.", stopped=True, steps=list(self.last_steps))
 
@@ -103,9 +105,6 @@ class VisionAgent:
                 progress(f"Step {step}/{self.max_steps}: analyzing target…")
             decision = self._decide(goal, image)
 
-            # This check is deliberately AFTER the potentially long model call.
-            # Pressing Stop while the model is thinking therefore prevents a
-            # late model response from reaching mouse/keyboard execution.
             if not self._active(generation):
                 return VisionResult("Task stopped. The pending AI decision was discarded.", stopped=True, steps=list(self.last_steps))
 
@@ -156,7 +155,6 @@ class VisionAgent:
                     steps=list(self.last_steps),
                 )
 
-            # Final cancellation guard immediately before touching the desktop.
             if not self._active(generation):
                 return VisionResult("Task stopped. No desktop action was executed.", stopped=True, steps=list(self.last_steps))
             if progress:
@@ -236,12 +234,13 @@ class VisionAgent:
         return round(x * ratio_x), round(y * ratio_y)
 
     def _get_coordinate_ratio(self) -> tuple[float, float]:
-        if not self._screenshot_size:
+        source_size = self._model_image_size or self._screenshot_size
+        if not source_size:
             return 1.0, 1.0
         try:
             import pyautogui
             screen_w, screen_h = pyautogui.size()
-            shot_w, shot_h = self._screenshot_size
+            shot_w, shot_h = source_size
             if shot_w > 0 and shot_h > 0 and screen_w > 0 and screen_h > 0:
                 return screen_w / shot_w, screen_h / shot_h
         except Exception:
@@ -255,7 +254,7 @@ class VisionAgent:
             "Goal: " + goal + "\n"
             "Available actions: click, double_click, right_click, type, press, hotkey, scroll, wait, done.\n"
             "For click/double_click/right_click, prefer bbox [left, top, right, bottom] for the exact visible target and use its center; "
-            "only use x/y when a bounding box is not possible. Coordinates are screenshot pixels, not browser/CSS coordinates.\n"
+            "only use x/y when a bounding box is not possible. Coordinates must refer to the image you receive, not browser/CSS coordinates.\n"
             "Include confidence as a number from 0 to 1 for click targets, and set verify_target=true only when a second visual check is genuinely needed.\n"
             "After an explicit single click request is executed, return done rather than requesting another click.\n"
             "For multi-step goals, inspect the new screenshot after each action and return done as soon as the requested end state is visibly achieved. "
@@ -285,7 +284,7 @@ class VisionAgent:
         prompt = (
             "Verify a proposed desktop click target. Return ONLY valid JSON.\n"
             "Goal: " + goal + "\n"
-            f"The proposed click point is ({round(candidate[0])}, {round(candidate[1])}) in screenshot pixels and is marked by a red crosshair.\n"
+            f"The proposed click point is ({round(candidate[0])}, {round(candidate[1])}) in the image pixels and is marked by a red crosshair.\n"
             '{"approved": true/false, "x": number, "y": number, "message": "..."}.\n'
             "Approve only when the point is safely inside the requested target. If slightly wrong, return a corrected point inside the clickable area."
         )
@@ -305,10 +304,21 @@ class VisionAgent:
         return corrected
 
     def _vision_json(self, image, prompt: str) -> dict:
+        # Sending the full 1920x1080 desktop to a local CPU vision model is
+        # unnecessarily expensive. Keep the original image for real clicks,
+        # but give the model a smaller image and scale its coordinates back.
+        model_image = image.copy()
+        max_edge = 1024
+        width, height = model_image.size
+        if max(width, height) > max_edge:
+            scale = max_edge / float(max(width, height))
+            model_image = model_image.resize((max(1, round(width * scale)), max(1, round(height * scale))))
+        self._model_image_size = tuple(int(value) for value in model_image.size)
+
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as handle:
             temp_path = Path(handle.name)
         try:
-            image.save(temp_path)
+            model_image.save(temp_path, optimize=True)
             encoded = base64.b64encode(temp_path.read_bytes()).decode("ascii")
         finally:
             temp_path.unlink(missing_ok=True)
