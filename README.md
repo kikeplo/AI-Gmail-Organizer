@@ -180,6 +180,7 @@ The distributed application is the same code for every user; user-specific crede
 
 ## Development history
 
+### Foundation
 - **v0.1** — desktop overlay foundation
 - **v0.2** — interactive command interface
 - **v0.3** — Gmail OAuth and read-only retrieval
@@ -188,5 +189,19 @@ The distributed application is the same code for every user; user-specific crede
 - **v0.6** — Windows automation tools
 - **v0.7** — local memory and usage analytics
 - **v1.0.0** — unified desktop assistant foundation
-- **v3.13.7** — local AI performance/vision improvements and natural-language file/folder desktop commands
-- **v3.13.8** — release-hardening: synchronized version metadata and documentation, expanded release documentation, and CI unit-test coverage
+
+### Expansion and platform hardening
+- **v1.x–v2.x** — expanded the assistant beyond the original Gmail workflow with browser automation, reusable skills, learned procedures, task planning, broader Windows controls, provider integration, permissions, and deployment tooling
+- **v3.0–v3.8** — matured the hybrid desktop-assistant architecture, strengthening automation, browser/vision capabilities, provider failover, setup flows, permissions, and portable Windows deployment
+- **v3.8.3** — consolidated the mature desktop-assistant architecture with explicit desktop permissions, automation, browser/vision capabilities, provider and deployment improvements
+
+### Local AI and production refinement
+- **v3.12** — introduced the local-AI architecture built around Ollama, with local/cloud routing and a dedicated local execution path
+- **v3.13.0–v3.13.1** — expanded Local AI settings and routing controls and continued performance/refinement work
+- **v3.13.2** — tuned local inference for responsiveness with keep-alive, context, and generation-budget controls
+- **v3.13.3** — improved local-model installation reliability and established the fast Qwen3 model as the default local text path
+- **v3.13.4** — refined model-installation progress, status feedback, and error presentation
+- **v3.13.5** — improved visual-task responsiveness and background execution feedback
+- **v3.13.6** — further optimized local text and vision inference for practical desktop use
+- **v3.13.7** — added more universal natural-language Windows file and folder commands
+- **v3.13.8** — release hardening: synchronized version metadata and documentation, expanded release documentation, and CI unit-test coverage
