@@ -1,1 +1,0 @@
-This temporary marker documents the expanded development-history update for the README.
