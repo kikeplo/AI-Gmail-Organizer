@@ -19,7 +19,7 @@ class ActiveWindow:
 
 
 class WindowsTools:
-    """Windows automation surface for apps, windows, mouse, keyboard, and foreground tracking."""
+    """Windows automation surface for apps, files, folders, windows, mouse, keyboard, and foreground tracking."""
 
     APP_ALIASES = {
         "chrome": ("chrome", "chrome.exe"),
@@ -119,6 +119,61 @@ class WindowsTools:
         if path: image.save(path)
         return image
 
+    def open_file_or_folder(self, target: str, location_hint: str = "") -> str:
+        """Open a requested file/folder by exact path or by filename in common user folders."""
+        if os.name != "nt": raise OSError("Opening Windows files is only available on Windows.")
+        raw = target.strip().strip('"\'')
+        if not raw:
+            raise ValueError("Please specify the file or folder to open.")
+
+        candidate = Path(os.path.expandvars(os.path.expanduser(raw)))
+        if candidate.exists():
+            os.startfile(str(candidate))
+            return f"Opened {candidate.name or candidate}."
+
+        home = Path.home()
+        desktop = Path(os.getenv("USERPROFILE", str(home))) / "Desktop"
+        downloads = home / "Downloads"
+        documents = home / "Documents"
+        hint = location_hint.casefold()
+        roots: list[Path] = []
+        if "desktop" in hint: roots.append(desktop)
+        elif "download" in hint: roots.append(downloads)
+        elif "document" in hint: roots.append(documents)
+        roots.extend(path for path in (desktop, downloads, documents) if path not in roots)
+
+        target_name = Path(raw).name.casefold()
+        target_stem = Path(raw).stem.casefold()
+        matches: list[Path] = []
+        for root in roots:
+            if not root.is_dir():
+                continue
+            try:
+                for path in root.rglob("*"):
+                    if len(matches) >= 20: break
+                    if not path.is_file() and not path.is_dir(): continue
+                    name = path.name.casefold()
+                    if name == target_name or ("." not in raw and path.stem.casefold() == target_stem):
+                        matches.append(path)
+                if matches and ("desktop" in hint or "download" in hint or "document" in hint): break
+            except (OSError, PermissionError):
+                continue
+
+        unique: list[Path] = []
+        seen: set[str] = set()
+        for path in matches:
+            key = str(path).casefold()
+            if key not in seen:
+                seen.add(key); unique.append(path)
+        if not unique:
+            raise FileNotFoundError(f"I couldn't find '{raw}' in Desktop, Downloads, or Documents.")
+        if len(unique) > 1:
+            choices = "\n".join(f"• {path}" for path in unique[:5])
+            raise FileExistsError(f"I found multiple matches for '{raw}'. Please specify the location.\n\n{choices}")
+        path = unique[0]
+        os.startfile(str(path))
+        return f"Opened {path.name}."
+
     def launch_application(self, executable: str, args: Sequence[str] = ()):
         if os.name != "nt": raise OSError("Windows automation is only available on Windows.")
         target = executable.strip()
@@ -152,17 +207,14 @@ class WindowsTools:
         for target in candidates:
             try:
                 if target.endswith(":") or target.startswith("ms-"):
-                    if as_admin:
-                        raise OSError("This app uses a Windows protocol and cannot be elevated by this launcher.")
+                    if as_admin: raise OSError("This app uses a Windows protocol and cannot be elevated by this launcher.")
                     os.startfile(target)
+                elif as_admin:
+                    self.launch_application_as_admin(target)
                 else:
-                    if as_admin:
-                        self.launch_application_as_admin(target)
-                    else:
-                        try: subprocess.Popen([target], shell=False)
-                        except FileNotFoundError: os.startfile(target)
-                time.sleep(0.25)
-                self.update_last_external_window()
+                    try: subprocess.Popen([target], shell=False)
+                    except FileNotFoundError: os.startfile(target)
+                time.sleep(0.25); self.update_last_external_window()
                 return f"Opened {name}{' with administrator privileges' if as_admin else ''}."
             except Exception as exc: last_error = exc
         raise FileNotFoundError(f"Could not open {name}. {last_error}")
