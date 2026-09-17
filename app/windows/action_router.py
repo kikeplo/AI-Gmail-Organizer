@@ -16,7 +16,7 @@ class WindowActionResponse:
 
 
 class WindowsActionRouter:
-    """Translate desktop requests into app launch, semantic UI, or low-level input."""
+    """Translate natural-language desktop requests into safe Windows actions."""
 
     def __init__(self, tools: WindowsTools | None = None, ui: WindowsUIAutomation | None = None) -> None:
         self.tools = tools or WindowsTools()
@@ -32,6 +32,12 @@ class WindowsActionRouter:
         try:
             if any(term in text for term in ("what window", "active window", "focused window", "which window")):
                 return WindowActionResponse(self._describe_active_window(self.tools.get_last_external_window()), mode="windows_active_window")
+
+            file_target = self._file_request(command)
+            if file_target:
+                target, location = file_target
+                message = self.tools.open_file_or_folder(target, location)
+                return WindowActionResponse(message, mode="windows_file_open")
 
             desktop_app, as_admin = self._desktop_app_request(command)
             if desktop_app:
@@ -68,11 +74,28 @@ class WindowsActionRouter:
             if "minimize" in text and "window" in text: self.tools.minimize_active_window(); return WindowActionResponse("The active window was minimized.", mode="windows_action")
             if "maximize" in text and "window" in text: self.tools.maximize_active_window(); return WindowActionResponse("The active window was maximized.", mode="windows_action")
             if ("restore" in text or "unmaximize" in text) and "window" in text: self.tools.restore_active_window(); return WindowActionResponse("The active window was restored.", mode="windows_action")
-            return WindowActionResponse("Desktop control is available. You can ask me to open an app, click, type, press a key, use a shortcut, scroll, or control the active window.")
+            return WindowActionResponse("I couldn't map that desktop request to a safe direct action yet. I can work with apps, files, folders, windows, mouse, keyboard, and shortcuts.")
         except OSError as exc:
             return WindowActionResponse(str(exc), mode="windows_unavailable")
         except Exception as exc:
             return WindowActionResponse(f"Desktop action failed.\n\n{exc}", mode="windows_error")
+
+    @staticmethod
+    def _file_request(command: str) -> tuple[str, str] | None:
+        """Recognize natural-language requests to open a file or folder."""
+        pattern = r"(?:open|launch|start|run|double[- ]click|show)\s+(?:the\s+)?(?:(?:file|folder|document|directory)\s+)?(?:called\s+|named\s+)?[\"']?(.+?)[\"']?(?:\s+(?:on|from)\s+(?:my\s+|the\s+)?(desktop|downloads?|documents?))?$"
+        match = re.match(pattern, command.strip(), re.IGNORECASE)
+        if not match:
+            return None
+        target = match.group(1).strip().strip('"\'')
+        location = match.group(2) or ""
+        lower_target = target.casefold()
+        if lower_target in {"chrome", "google chrome", "teams", "microsoft teams", "calculator", "calc", "notepad", "explorer", "file explorer", "settings"}:
+            return None
+        looks_like_path = any(token in target for token in ("\\", "/", ":")) or "." in target or "desktop" in location.casefold()
+        if not looks_like_path:
+            return None
+        return target, location
 
     @staticmethod
     def _desktop_app_request(command: str) -> tuple[str | None, bool]:
@@ -109,7 +132,7 @@ class WindowsActionRouter:
 
     @staticmethod
     def _is_windows_intent(text: str) -> bool:
-        actions = ("active", "focused", "minimize", "maximize", "restore", "click", "double click", "double-click", "right click", "right-click", "type ", "press ", "hotkey", "shortcut", "scroll", "select", "open ", "launch ", "start ", "run ")
+        actions = ("active", "focused", "minimize", "maximize", "restore", "click", "double click", "double-click", "right click", "right-click", "type ", "press ", "hotkey", "shortcut", "scroll", "select", "open ", "launch ", "start ", "run ", "show ")
         return ("window" in text or "desktop" in text or "screen" in text or any(term in text for term in actions)) and any(term in text for term in actions)
 
     @staticmethod
