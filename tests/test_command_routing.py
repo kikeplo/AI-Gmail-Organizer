@@ -51,3 +51,7 @@ def test_simple_prompt_is_not_marked_complex():
     from app.ai.router import SmartAIRouter
 
     assert SmartAIRouter._is_complex_prompt("What is a neural network?") is False
+
+
+def test_general_conversation_uses_router_instead_of_direct_local_fast_path():
+    assert CommandAgent._should_use_local_ai("What is the difference between TCP and UDP?") is False
