@@ -98,12 +98,17 @@ class CommandAgent:
                 mode="procedure_found",
             )
 
+        # Known Windows Start-button requests are deterministic system controls
+        # and should not spend a slow vision cycle.
+        if WindowsActionRouter._is_start_button_request(lowered):
+            windows_response = self.windows.handle(command)
+            response = AgentResponse(windows_response.text, mode=windows_response.mode) if windows_response is not None else AgentResponse("I couldn't open the Windows Start menu.", mode="windows_error")
         # Gmail UI commands should use visual computer control when the user is
         # asking to manipulate the Gmail web interface rather than the Gmail API.
         # This intentionally runs before the deterministic Windows router because
         # phrases such as "open starred on my Gmail" contain the generic word
         # "open" but are not Windows app-launch requests.
-        if self._looks_like_gmail_ui_task(lowered):
+        elif self._looks_like_gmail_ui_task(lowered):
             try:
                 result = self.vision.run(command, progress=on_status)
                 response = AgentResponse(result.text, mode="vision")
