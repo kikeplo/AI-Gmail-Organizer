@@ -82,6 +82,13 @@ def save_routing_mode(mode: str) -> None:
     os.environ["AI_ROUTING_MODE"] = normalized
 
 
+def save_feedback_escalation(enabled: bool) -> None:
+    """Allow thumbs-down feedback to be assessed by Cloud AI when configured."""
+    value = "1" if enabled else "0"
+    set_key(str(ENV_FILE), "AI_FEEDBACK_ESCALATION", value)
+    os.environ["AI_FEEDBACK_ESCALATION"] = value
+
+
 def save_browser_settings(mode: str, cdp_url: str, profile_dir: str) -> None:
     set_key(str(ENV_FILE), "BROWSER_MODE", mode.strip().lower())
     set_key(str(ENV_FILE), "BROWSER_CDP_URL", cdp_url.strip())
