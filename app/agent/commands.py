@@ -366,9 +366,6 @@ class CommandAgent:
             "the original model, or that the answer was regenerated. Never claim external actions occurred unless the "
             "previous answer explicitly reported a successful application action."
         )
-        context = self.memory.recent_context(limit=4, max_chars=3500)
-        if context:
-            system += "\n\n" + context
         prompt = f"User request:\n{command}\n\nPrevious assistant answer:\n{response}"
         return self.ai_router._cloud_chat(prompt, system).text.strip()
     def _ask_ai(self, command: str) -> AgentResponse:
