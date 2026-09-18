@@ -229,23 +229,52 @@ class VisionAgent:
         target = self._raw_target_point(decision)
         if target is None:
             return None
-        x, y = target
-        ratio_x, ratio_y = self._get_coordinate_ratio()
-        return round(x * ratio_x), round(y * ratio_y)
+        return self._map_image_point_to_screen(*target)
 
-    def _get_coordinate_ratio(self) -> tuple[float, float]:
-        source_size = self._model_image_size or self._screenshot_size
-        if not source_size:
-            return 1.0, 1.0
+    def _map_image_point_to_screen(self, x: float, y: float) -> tuple[int, int] | None:
+        """Map a model-reported point safely through resized/original screenshot space.
+
+        Vision models occasionally return coordinates for the original screenshot
+        even though the supplied image was resized. Detect that case explicitly
+        instead of multiplying by the wrong scale and sending an off-screen click.
+        """
+        screenshot_size = self._screenshot_size
+        model_size = self._model_image_size
         try:
             import pyautogui
             screen_w, screen_h = pyautogui.size()
-            shot_w, shot_h = source_size
-            if shot_w > 0 and shot_h > 0 and screen_w > 0 and screen_h > 0:
-                return screen_w / shot_w, screen_h / shot_h
         except Exception:
-            pass
-        return 1.0, 1.0
+            return None
+
+        if screen_w <= 0 or screen_h <= 0:
+            return None
+
+        shot_w, shot_h = screenshot_size or (screen_w, screen_h)
+        model_w, model_h = model_size or (shot_w, shot_h)
+        if shot_w <= 0 or shot_h <= 0 or model_w <= 0 or model_h <= 0:
+            return None
+
+        # Some vision models use normalized [0, 1] coordinates for x/y.
+        if 0.0 <= x <= 1.0 and 0.0 <= y <= 1.0 and (model_w > 2 or model_h > 2):
+            screenshot_x = x * shot_w
+            screenshot_y = y * shot_h
+        elif 0.0 <= x < model_w and 0.0 <= y < model_h:
+            # Coordinates refer to the resized image sent to the model.
+            screenshot_x = x * (shot_w / model_w)
+            screenshot_y = y * (shot_h / model_h)
+        elif 0.0 <= x < shot_w and 0.0 <= y < shot_h:
+            # Coordinates refer to the original screenshot. Keep them in that
+            # space; this is the failure mode that previously produced bad clicks.
+            screenshot_x = x
+            screenshot_y = y
+        else:
+            return None
+
+        screen_x = round(screenshot_x * (screen_w / shot_w))
+        screen_y = round(screenshot_y * (screen_h / shot_h))
+        if not (0 <= screen_x < screen_w and 0 <= screen_y < screen_h):
+            return None
+        return screen_x, screen_y
 
     def _decide(self, goal: str, image) -> dict:
         return self._vision_json(
