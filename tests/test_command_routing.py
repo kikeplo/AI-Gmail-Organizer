@@ -18,3 +18,22 @@ def test_split_task_understands_natural_chain():
 def test_split_task_preserves_non_action_and():
     goal = "open Chrome and search for AI engineering jobs"
     assert CommandAgent._split_task(goal) == ["open Chrome", "search for AI engineering jobs"]
+
+
+def test_start_button_command_uses_windows_router(monkeypatch) -> None:
+    from app.agent.commands import CommandAgent
+
+    agent = CommandAgent()
+    calls = []
+
+    def fake_handle(command):
+        calls.append(command)
+        from app.windows.action_router import WindowActionResponse
+        return WindowActionResponse("Opened the Windows Start menu.", mode="windows_start")
+
+    monkeypatch.setattr(agent.windows, "handle", fake_handle)
+    response = agent.respond("Click on Windows")
+
+    assert response.mode == "windows_start"
+    assert response.text == "Opened the Windows Start menu."
+    assert calls == ["Click on Windows"]
