@@ -23,12 +23,25 @@ def check_imports() -> None:
 
 
 def check_packaged_app_modules() -> None:
-    module = APP_DIR / "app" / "windows" / "action_router.pyc"
-    if not module.is_file():
+    matches = list(APP_DIR.rglob("action_router.py")) + list(APP_DIR.rglob("action_router.pyc"))
+    if not matches:
         raise RuntimeError(
-            "The portable package is missing app/windows/action_router.pyc. "
-            "The application's Python modules were not collected as loose files."
+            "The portable package is missing app/windows/action_router.py or action_router.pyc. "
+            "The application's Windows action router was not collected."
         )
+    required = {
+        "tools": list(APP_DIR.rglob("tools.py")) + list(APP_DIR.rglob("tools.pyc")),
+        "ui_automation": list(APP_DIR.rglob("ui_automation.py")) + list(APP_DIR.rglob("ui_automation.pyc")),
+    }
+    missing = [name for name, files in required.items() if not files]
+    if missing:
+        raise RuntimeError(
+            "The portable package is missing application Windows modules: "
+            + ", ".join(missing)
+        )
+    print("Packaged application modules found:")
+    for path in matches[:1]:
+        print(f"  action_router: {path}")
 
 
 def find_chrome() -> Path:
