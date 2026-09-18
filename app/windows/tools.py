@@ -143,45 +143,76 @@ class WindowsTools:
             "latest", "latest file", "most recent", "most recent file", "newest", "newest file",
         }
 
-        def clean_location(value: str) -> str:
-            return re.sub(r"\b(?:my|the|a|one of my)\b", " ", value, flags=re.IGNORECASE)
-
         import re
-        location_name = clean_location(location_hint).strip()
-        location_name = re.sub(r"\b(?:folder|directory)\b", "", location_name, flags=re.IGNORECASE).strip()
+        from difflib import get_close_matches
+
+        def clean_location(value: str) -> str:
+            value = re.sub(r"\b(?:my|the|a|one of my)\b", " ", value, flags=re.IGNORECASE)
+            value = re.sub(r"\b(?:folder|directory)\b", " ", value, flags=re.IGNORECASE)
+            return re.sub(r"\s+", " ", value).strip()
+
+        def canonical_common_location(value: str) -> str:
+            normalized = clean_location(value).casefold()
+            aliases = {
+                "desktop": "Desktop",
+                "desktops": "Desktop",
+                "download": "Downloads",
+                "downloads": "Downloads",
+                "downlaod": "Downloads",
+                "downlaods": "Downloads",
+                "document": "Documents",
+                "documents": "Documents",
+                "doc": "Documents",
+                "docs": "Documents",
+            }
+            if normalized in aliases:
+                return aliases[normalized]
+            match = get_close_matches(normalized, aliases.keys(), n=1, cutoff=0.78)
+            return aliases[match[0]] if match else ""
+
+        location_name = clean_location(location_hint)
+        canonical = canonical_common_location(location_name)
+        if canonical:
+            location_name = canonical
         location_roots: list[Path] = list(common_roots)
 
         # A concrete location can be an absolute path or a named folder under
         # the user's common folders. Resolve it before searching for the file.
         if location_hint.strip():
-            location_path = Path(os.path.expandvars(os.path.expanduser(location_hint.strip().strip('"\''))))
-            if location_path.is_dir():
-                location_roots = [location_path]
+            if canonical:
+                canonical_root = {
+                    "Desktop": desktop,
+                    "Downloads": downloads,
+                    "Documents": documents,
+                }[canonical]
+                location_roots = [canonical_root]
             else:
-                location_match = None
-                if location_name:
-                    location_target = location_name.casefold()
-                    for base in common_roots:
-                        if not base.is_dir():
-                            continue
-                        try:
-                            for path in base.rglob("*"):
-                                if path.is_dir() and path.name.casefold() == location_target:
-                                    location_match = path
+                expanded_location = os.path.expandvars(os.path.expanduser(location_hint.strip().strip('"\'')))
+                location_path = Path(expanded_location)
+                if location_path.is_absolute() and location_path.is_dir():
+                    location_roots = [location_path]
+                else:
+                    location_match = None
+                    if location_name:
+                        location_target = location_name.casefold()
+                        for base in common_roots:
+                            if not base.is_dir():
+                                continue
+                            try:
+                                for path in base.rglob("*"):
+                                    if path.is_dir() and path.name.casefold() == location_target:
+                                        location_match = path
+                                        break
+                                if location_match is not None:
                                     break
-                            if location_match is not None:
-                                break
-                        except (OSError, PermissionError):
-                            continue
-                if location_match is not None:
-                    location_roots = [location_match]
-                elif location_name and not any(
-                    location_name.casefold() in {path.name.casefold(), path.stem.casefold()}
-                    for path in common_roots
-                ):
-                    raise FileNotFoundError(
-                        f"I couldn't find the folder '{location_name}' in Desktop, Downloads, or Documents."
-                    )
+                            except (OSError, PermissionError):
+                                continue
+                    if location_match is not None:
+                        location_roots = [location_match]
+                    else:
+                        raise FileNotFoundError(
+                            f"I couldn't find the folder '{location_name}' in Desktop, Downloads, or Documents."
+                        )
 
         if latest_requested:
             latest_files: list[Path] = []
