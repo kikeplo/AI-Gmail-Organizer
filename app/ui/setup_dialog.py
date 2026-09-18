@@ -17,7 +17,7 @@ from app.ai.provider import AIProvider
 from app.config.user_settings import (
     read_config, save_api_key, save_backup_api_keys, save_base_url,
     save_gmail_client_id, save_local_ai, save_model, save_provider_name,
-    save_routing_mode,
+    save_routing_mode, save_feedback_escalation,
 )
 from app.gmail.client import GmailClient
 from app.ui.help_dialog import HelpDialog
@@ -210,7 +210,12 @@ class SetupDialog(QDialog):
         self.local_install_status = QLabel("Install status: ready"); self.local_install_status.setWordWrap(True); self.local_install_status.setObjectName("localInstallStatus"); form.addRow("Model install", self.local_install_status)
         self.local_progress = QProgressBar(); self.local_progress.setRange(0, 100); self.local_progress.setValue(0); self.local_progress.setTextVisible(True); self.local_progress.setObjectName("localProgress"); self.local_progress.setVisible(False); form.addRow("Download", self.local_progress)
         routing_value = config.get("AI_ROUTING_MODE", "local-first") or "local-first"; self.routing = QComboBox(); self.routing.addItems(["local-first", "cloud-first", "balanced", "local-only"]); self.routing.setCurrentText(routing_value if routing_value in {"local-first", "cloud-first", "balanced", "local-only"} else "local-first"); form.addRow("AI routing", self.routing)
-        routing_hint = QLabel("Local-first keeps normal AI work on your PC. When Local AI is missing, stopped, or fails, the app automatically uses the configured cloud provider. Local-only never sends requests to cloud AI."); routing_hint.setWordWrap(True); routing_hint.setObjectName("routingHint"); form.addRow("", routing_hint)
+        routing_hint = QLabel("Local-first keeps ordinary AI work on your PC. Complex prompts can use Cloud AI when a cloud provider is configured. Local-only never sends requests to cloud AI."); routing_hint.setWordWrap(True); routing_hint.setObjectName("routingHint"); form.addRow("", routing_hint)
+        self.feedback_escalation = QCheckBox("Allow Cloud AI to reassess a response after a thumbs-down")
+        self.feedback_escalation.setChecked(config.get("AI_FEEDBACK_ESCALATION", "0").strip().lower() in {"1", "true", "yes", "on"})
+        form.addRow("Response feedback", self.feedback_escalation)
+        feedback_hint = QLabel("When enabled, clicking thumbs-down on a general AI reply sends that request and response to the configured Cloud AI provider for a second assessment and improved answer. Nothing is sent when this is disabled or Local-only is selected.")
+        feedback_hint.setWordWrap(True); feedback_hint.setObjectName("routingHint"); form.addRow("", feedback_hint)
 
         google_row = QHBoxLayout(); self.google_status = QLineEdit("Ready to connect Gmail with Google"); self.google_status.setReadOnly(True); connect_google = QPushButton("Sign in with Google"); connect_google.clicked.connect(self._connect_google); google_row.addWidget(self.google_status, 1); google_row.addWidget(connect_google); form.addRow("Gmail", google_row)
         content_layout.addLayout(form)
@@ -482,7 +487,7 @@ class SetupDialog(QDialog):
 
     def _save(self) -> None:
         try:
-            save_provider_name(self.provider.text()); save_api_key(self.api_key.text()); save_backup_api_keys([field.text() for field in self.backup_keys]); save_base_url(self.base_url.text()); save_model(self.model.currentText().strip()); save_local_ai(self.local_enabled.isChecked(), self.local_base_url.text().strip() or LocalAIEngine.DEFAULT_BASE_URL, self.local_model.text().strip() or LocalAIEngine.DEFAULT_MODEL); save_routing_mode(self.routing.currentText())
+            save_provider_name(self.provider.text()); save_api_key(self.api_key.text()); save_backup_api_keys([field.text() for field in self.backup_keys]); save_base_url(self.base_url.text()); save_model(self.model.currentText().strip()); save_local_ai(self.local_enabled.isChecked(), self.local_base_url.text().strip() or LocalAIEngine.DEFAULT_BASE_URL, self.local_model.text().strip() or LocalAIEngine.DEFAULT_MODEL); save_routing_mode(self.routing.currentText()); save_feedback_escalation(self.feedback_escalation.isChecked())
         except OSError as exc:
             QMessageBox.critical(self, "Could not save settings", str(exc)); return
         self.accept()
