@@ -138,7 +138,7 @@ class OverlayWindow(QMainWindow):
     def _refresh_dashboard(self,index:int)->None:
         if index==1: self.history_view.store=self._memory; self.history_view.refresh()
         elif index==2: self.usage_view.store=self._memory; self.usage_view.refresh()
-    def _add_message(self, role: str, text: str, *, feedback: bool = false, command: str = "", source: str = "") -> None:
+    def _add_message(self, role: str, text: str, *, feedback: bool = False, command: str = "", source: str = "") -> None:
         cleaned = self._clean_ai_text(text) if role == "assistant" else text
         if role != "assistant" or not feedback:
             label = QLabel(cleaned)
