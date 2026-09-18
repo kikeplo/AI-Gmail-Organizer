@@ -1,6 +1,6 @@
 # AI Gmail Organizer
 
-**Current version: v3.13.9**
+**Current version: v3.14.0**
 
 Hybrid Windows desktop assistant for Gmail organization, natural-language desktop automation, local AI, browser automation, vision-assisted interaction, reusable skills, learned procedures, autonomous task planning, and explicit access permissions.
 
@@ -29,7 +29,8 @@ Hybrid Windows desktop assistant for Gmail organization, natural-language deskto
 - Local Ollama AI with a fast Qwen3 text model (`qwen3:1.7b`) and a quality model (`qwen3:4b`)
 - Local Qwen3-VL vision model for screenshot-based interaction (`qwen3-vl:2b`)
 - Local-only routing mode for keeping AI processing on the machine
-- Local-first/cloud-first/balanced routing with cloud fallback when allowed
+- Local-first/cloud-first/balanced routing with complexity-aware Cloud AI escalation when allowed
+- Optional Cloud AI reassessment after a thumbs-down on an AI-generated answer
 - Optional OpenAI Responses API integration
 - Local interaction history and usage statistics in SQLite
 - Deterministic fallbacks when external AI services are unavailable or not configured
@@ -160,7 +161,7 @@ Local AI can be used without a cloud API key. Select Local-only routing when clo
 
 ### Cloud AI (optional)
 
-The first-run setup dialog can save an OpenAI API key and model name to the current user's local configuration. The repository only contains `.env.example` with empty placeholders.
+The first-run setup dialog can save an OpenAI API key and model name to the current user's local configuration. When enabled in Settings, a thumbs-down on a general AI reply can send that prompt and response to the configured Cloud AI provider for a second assessment and improved answer. The repository only contains `.env.example` with empty placeholders.
 
 ## Testing
 
@@ -206,3 +207,4 @@ The distributed application is the same code for every user; user-specific crede
 - **v3.13.7** — added more universal natural-language Windows file and folder commands
 - **v3.13.8** — release hardening: synchronized version metadata and documentation, expanded release documentation, and CI unit-test coverage
 - **v3.13.9** — desktop automation fixes: safer vision coordinate mapping, stronger natural-language file/folder resolution, latest-file opening, and deterministic Windows Start-button handling
+- **v3.14.0** — expanded general-purpose conversation with complexity-aware local/cloud routing, recent conversation context, ChatGPT-style thumbs-up/thumbs-down feedback, and optional Cloud AI reassessment for unhelpful answers
