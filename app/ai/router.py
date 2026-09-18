@@ -104,7 +104,13 @@ class SmartAIRouter:
         if local_only:
             raise AIProviderError(last_message if attempted_local else "Local AI is required, but it is unavailable.")
 
-        for key in self._ordered_candidates(skip_local=attempted_local):
+        if self._is_complex_prompt(prompt):
+            candidates = ["cloud"] if self.cloud.configured else []
+            candidates.append("local")
+        else:
+            candidates = self._ordered_candidates(skip_local=attempted_local)
+
+        for key in candidates:
             state = self.states[key]
             if not state.available:
                 continue
