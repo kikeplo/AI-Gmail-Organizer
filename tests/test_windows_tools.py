@@ -61,3 +61,13 @@ def test_file_request_accepts_specific_named_file() -> None:
         "Open the specific file with the name budget.xlsx"
     )
     assert parsed == ("budget.xlsx", "")
+
+
+def test_file_request_accepts_polite_phrasing() -> None:
+    parsed = WindowsActionRouter._file_request("Can you open the latest file in my downloads folder")
+    assert parsed == ("latest file", "downloads")
+
+
+def test_file_request_preserves_typo_for_resolver() -> None:
+    parsed = WindowsActionRouter._file_request("Open the latest file in my downlaod folder")
+    assert parsed == ("latest file", "downlaod")
