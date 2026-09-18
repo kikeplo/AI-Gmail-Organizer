@@ -89,7 +89,7 @@ class WindowsActionRouter:
         """Recognize natural-language file/folder requests, including latest files."""
         text = command.strip()
         lowered = text.casefold()
-        verb = re.match(r"^\s*(?:open|launch|start|run|double[- ]click|show)\s+(.+?)\s*$", text, re.IGNORECASE)
+        text = re.sub(r"^\s*(?:(?:can|could|would)\s+you|please)\s+", "", text, count=1, flags=re.IGNORECASE).strip()\n        text = re.sub(r"^\s*(?:please\s+)?(?:could|would|can)\s+you\s+", "", text, count=1, flags=re.IGNORECASE).strip()\n        verb = re.match(r"^\s*(?:open|launch|start|run|double[- ]click|show)\s+(.+?)\s*$", text, re.IGNORECASE)
         if not verb:
             return None
 
