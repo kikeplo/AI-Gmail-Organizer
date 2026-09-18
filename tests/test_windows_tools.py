@@ -39,3 +39,18 @@ def test_non_windows_intent_is_ignored() -> None:
     tools = FakeWindowsTools()
     assert WindowsActionRouter(tools).handle("Organize my Gmail inbox") is None
     assert tools.calls == []
+
+
+def test_file_request_accepts_named_file_without_extension() -> None:
+    parsed = WindowsActionRouter._file_request("Open the specific file called report")
+    assert parsed == ("report", "")
+
+
+def test_file_request_accepts_latest_with_named_folder() -> None:
+    parsed = WindowsActionRouter._file_request("Open the latest in my Projects folder")
+    assert parsed == ("latest", "Projects")
+
+
+def test_start_button_request() -> None:
+    assert WindowsActionRouter._is_start_button_request("Click on Windows")
+    assert WindowsActionRouter._is_start_button_request("Open the Start button")
