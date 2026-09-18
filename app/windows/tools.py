@@ -120,8 +120,10 @@ class WindowsTools:
         return image
 
     def open_file_or_folder(self, target: str, location_hint: str = "") -> str:
-        """Open a requested file/folder by exact path or by filename in common user folders."""
-        if os.name != "nt": raise OSError("Opening Windows files is only available on Windows.")
+        """Open a file/folder by path, name, folder hint, or latest-modified file."""
+        if os.name != "nt":
+            raise OSError("Opening Windows files is only available on Windows.")
+
         raw = target.strip().strip('"\'')
         if not raw:
             raise ValueError("Please specify the file or folder to open.")
@@ -135,27 +137,83 @@ class WindowsTools:
         desktop = Path(os.getenv("USERPROFILE", str(home))) / "Desktop"
         downloads = home / "Downloads"
         documents = home / "Documents"
-        hint = location_hint.casefold()
-        roots: list[Path] = []
-        if "desktop" in hint: roots.append(desktop)
-        elif "download" in hint: roots.append(downloads)
-        elif "document" in hint: roots.append(documents)
-        roots.extend(path for path in (desktop, downloads, documents) if path not in roots)
+        common_roots = [desktop, downloads, documents]
+        hint = location_hint.strip().strip('"\'').casefold()
+        latest_requested = raw.casefold() in {
+            "latest", "latest file", "most recent", "most recent file", "newest", "newest file",
+        }
+
+        def clean_location(value: str) -> str:
+            return re.sub(r"\b(?:my|the|a|one of my)\b", " ", value, flags=re.IGNORECASE)
+
+        import re
+        location_name = clean_location(location_hint).strip()
+        location_name = re.sub(r"\b(?:folder|directory)\b", "", location_name, flags=re.IGNORECASE).strip()
+        location_roots: list[Path] = list(common_roots)
+
+        # A concrete location can be an absolute path or a named folder under
+        # the user's common folders. Resolve it before searching for the file.
+        if location_hint.strip():
+            location_path = Path(os.path.expandvars(os.path.expanduser(location_hint.strip().strip('"\''))))
+            if location_path.is_dir():
+                location_roots = [location_path]
+            else:
+                location_match = None
+                if location_name:
+                    location_target = location_name.casefold()
+                    for base in common_roots:
+                        if not base.is_dir():
+                            continue
+                        try:
+                            for path in base.rglob("*"):
+                                if path.is_dir() and path.name.casefold() == location_target:
+                                    location_match = path
+                                    break
+                            if location_match is not None:
+                                break
+                        except (OSError, PermissionError):
+                            continue
+                if location_match is not None:
+                    location_roots = [location_match]
+
+        if latest_requested:
+            latest_files: list[Path] = []
+            for root in location_roots:
+                if not root.is_dir():
+                    continue
+                try:
+                    latest_files.extend(path for path in root.rglob("*") if path.is_file())
+                except (OSError, PermissionError):
+                    continue
+            if not latest_files:
+                raise FileNotFoundError(
+                    f"I couldn't find a file to open in {location_name or 'the searched folders'}."
+                )
+            latest = max(latest_files, key=lambda path: self._safe_mtime(path))
+            os.startfile(str(latest))
+            return f"Opened the latest file: {latest.name}."
 
         target_name = Path(raw).name.casefold()
         target_stem = Path(raw).stem.casefold()
         matches: list[Path] = []
-        for root in roots:
+        explicit_location = bool(location_hint.strip())
+
+        for root in location_roots:
             if not root.is_dir():
                 continue
             try:
                 for path in root.rglob("*"):
-                    if len(matches) >= 20: break
-                    if not path.is_file() and not path.is_dir(): continue
+                    if len(matches) >= 20:
+                        break
+                    if not path.is_file() and not path.is_dir():
+                        continue
                     name = path.name.casefold()
-                    if name == target_name or ("." not in raw and path.stem.casefold() == target_stem):
+                    if name == target_name or (
+                        "." not in raw and path.stem.casefold() == target_stem
+                    ):
                         matches.append(path)
-                if matches and ("desktop" in hint or "download" in hint or "document" in hint): break
+                if matches and explicit_location:
+                    break
             except (OSError, PermissionError):
                 continue
 
@@ -164,15 +222,29 @@ class WindowsTools:
         for path in matches:
             key = str(path).casefold()
             if key not in seen:
-                seen.add(key); unique.append(path)
+                seen.add(key)
+                unique.append(path)
+
         if not unique:
-            raise FileNotFoundError(f"I couldn't find '{raw}' in Desktop, Downloads, or Documents.")
+            searched = location_name or "Desktop, Downloads, or Documents"
+            raise FileNotFoundError(f"I couldn't find '{raw}' in {searched}.")
+
         if len(unique) > 1:
             choices = "\n".join(f"• {path}" for path in unique[:5])
-            raise FileExistsError(f"I found multiple matches for '{raw}'. Please specify the location.\n\n{choices}")
+            raise FileExistsError(
+                f"I found multiple matches for '{raw}'. Please specify the location.\n\n{choices}"
+            )
+
         path = unique[0]
         os.startfile(str(path))
         return f"Opened {path.name}."
+
+    @staticmethod
+    def _safe_mtime(path: Path) -> float:
+        try:
+            return path.stat().st_mtime
+        except (OSError, ValueError):
+            return 0.0
 
     def launch_application(self, executable: str, args: Sequence[str] = ()):
         if os.name != "nt": raise OSError("Windows automation is only available on Windows.")
