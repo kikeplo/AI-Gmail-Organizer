@@ -175,6 +175,13 @@ class WindowsTools:
                             continue
                 if location_match is not None:
                     location_roots = [location_match]
+                elif location_name and not any(
+                    location_name.casefold() in {path.name.casefold(), path.stem.casefold()}
+                    for path in common_roots
+                ):
+                    raise FileNotFoundError(
+                        f"I couldn't find the folder '{location_name}' in Desktop, Downloads, or Documents."
+                    )
 
         if latest_requested:
             latest_files: list[Path] = []
