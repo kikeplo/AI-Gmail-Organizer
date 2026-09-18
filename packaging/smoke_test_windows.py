@@ -22,6 +22,15 @@ def check_imports() -> None:
     import playwright  # noqa: F401
 
 
+def check_packaged_app_modules() -> None:
+    module = APP_DIR / "app" / "windows" / "action_router.pyc"
+    if not module.is_file():
+        raise RuntimeError(
+            "The portable package is missing app/windows/action_router.pyc. "
+            "The application's Python modules were not collected as loose files."
+        )
+
+
 def find_chrome() -> Path:
     matches = list((APP_DIR / "playwright").rglob("chrome.exe"))
     if not matches:
