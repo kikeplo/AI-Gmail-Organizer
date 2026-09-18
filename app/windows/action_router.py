@@ -126,7 +126,7 @@ class WindowsActionRouter:
 
         body = re.sub(r"^[\"']|[\"']$", "", body.strip()).strip()
         body = re.sub(
-            r"^(?:a\s+)?(?:specific\s+)?(?:file|folder|document|directory)\s+"
+            r"^(?:(?:the|a)\s+)?(?:specific\s+)?(?:file|folder|document|directory)\s+"
             r"(?:(?:called|named)\s+|with\s+(?:the\s+)?name\s+)?",
             "",
             body,
