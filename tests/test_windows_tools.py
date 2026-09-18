@@ -54,3 +54,10 @@ def test_file_request_accepts_latest_with_named_folder() -> None:
 def test_start_button_request() -> None:
     assert WindowsActionRouter._is_start_button_request("Click on Windows")
     assert WindowsActionRouter._is_start_button_request("Open the Start button")
+
+
+def test_file_request_accepts_specific_named_file() -> None:
+    parsed = WindowsActionRouter._file_request(
+        "Open the specific file with the name budget.xlsx"
+    )
+    assert parsed == ("budget.xlsx", "")
