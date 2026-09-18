@@ -82,20 +82,74 @@ class WindowsActionRouter:
 
     @staticmethod
     def _file_request(command: str) -> tuple[str, str] | None:
-        """Recognize natural-language requests to open a file or folder."""
-        pattern = r"(?:open|launch|start|run|double[- ]click|show)\s+(?:the\s+)?(?:(?:file|folder|document|directory)\s+)?(?:called\s+|named\s+)?[\"']?(.+?)[\"']?(?:\s+(?:on|from)\s+(?:my\s+|the\s+)?(desktop|downloads?|documents?))?$"
-        match = re.match(pattern, command.strip(), re.IGNORECASE)
-        if not match:
+        """Recognize natural-language file/folder requests, including latest files."""
+        text = command.strip()
+        lowered = text.casefold()
+        verb = re.match(r"^\s*(?:open|launch|start|run|double[- ]click|show)\s+(.+?)\s*$", text, re.IGNORECASE)
+        if not verb:
             return None
-        target = match.group(1).strip().strip('"\'')
-        location = match.group(2) or ""
-        lower_target = target.casefold()
-        if lower_target in {"chrome", "google chrome", "teams", "microsoft teams", "calculator", "calc", "notepad", "explorer", "file explorer", "settings"}:
+
+        body = verb.group(1).strip()
+        original_body = body
+
+        # Pull an explicit location clause out first: "in Downloads",
+        # "from my Projects folder", "on the desktop", etc.
+        location = ""
+        location_match = re.search(
+            r"\s+(?:in|inside|from|on)\s+(?:(?:my|the|a)\s+)?(.+?)\s*$",
+            body,
+            re.IGNORECASE,
+        )
+        if location_match:
+            possible_location = location_match.group(1).strip()
+            if possible_location:
+                location = re.sub(
+                    r"\b(?:folder|directory)\b\s*$", "", possible_location, flags=re.IGNORECASE
+                ).strip()
+                body = body[: location_match.start()].strip()
+
+        # Support direct desktop/download/document wording as a location even
+        # when no preposition was captured.
+        if not location:
+            trailing = re.search(
+                r"\s+(?:on|from)\s+(?:my\s+|the\s+)?(desktop|downloads?|documents?)\s*$",
+                original_body,
+                re.IGNORECASE,
+            )
+            if trailing:
+                location = trailing.group(1)
+                body = original_body[: trailing.start()].strip()
+
+        body = re.sub(r"^[\"']|[\"']$", "", body.strip()).strip()
+        body = re.sub(
+            r"^(?:a\s+)?(?:specific\s+)?(?:file|folder|document|directory)\s+"
+            r"(?:(?:called|named)\s+|with\s+(?:the\s+)?name\s+)?",
+            "",
+            body,
+            flags=re.IGNORECASE,
+        ).strip()
+        body = re.sub(r"^[\"']|[\"']$", "", body).strip()
+
+        latest = body.casefold() in {
+            "latest", "latest file", "most recent", "most recent file", "newest", "newest file",
+        }
+        explicit_file_language = bool(
+            re.search(r"\b(?:file|folder|document|directory)\b", original_body, re.IGNORECASE)
+        )
+        looks_like_path = any(token in body for token in ("\\", "/", ":")) or "." in body
+        lower_target = body.casefold()
+
+        if lower_target in {
+            "chrome", "google chrome", "teams", "microsoft teams", "calculator", "calc",
+            "notepad", "explorer", "file explorer", "settings",
+        }:
             return None
-        looks_like_path = any(token in target for token in ("\\", "/", ":")) or "." in target or "desktop" in location.casefold()
-        if not looks_like_path:
+
+        if not (latest or location or explicit_file_language or looks_like_path):
             return None
-        return target, location
+
+        return body, location
+
 
     @staticmethod
     def _desktop_app_request(command: str) -> tuple[str | None, bool]:
