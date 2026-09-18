@@ -1,6 +1,6 @@
 # AI Gmail Organizer
 
-**Current version: v3.14.4**
+**Current version: v3.14.5**
 
 Hybrid Windows desktop assistant for Gmail organization, natural-language desktop automation, local AI, browser automation, vision-assisted interaction, reusable skills, learned procedures, autonomous task planning, and explicit access permissions.
 
@@ -212,3 +212,4 @@ The distributed application is the same code for every user; user-specific crede
 - **v3.14.2** — hardened the PyInstaller package by explicitly bundling Windows automation modules required at startup
 - **v3.14.3** — converted the application and subpackages to explicit Python packages to prevent frozen-runtime namespace import failures
 - **v3.14.4** — collects the local `app` package as external `.pyc` modules in the portable build to avoid PYZ import-resolution failures
+- **v3.14.5** — uses a filesystem-based Python module layout for the onedir package and adds a smoke-test check for `app/windows/action_router.pyc`
