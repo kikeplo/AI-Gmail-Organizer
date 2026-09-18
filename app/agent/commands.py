@@ -286,6 +286,9 @@ class CommandAgent:
         # General conversation goes through SmartAIRouter so complexity can
         # automatically select Cloud AI when permitted.
         lightweight_terms = ("classify", "categorize", "categorise", "extract", "parse", "json", "format", "is this", "does this", "which category", "what type", "rewrite", "shorten", "summarize this", "summarise this", "one sentence", "briefly")
+        complexity_terms = ("explain", "why", "compare", "research", "analyze", "analyse", "debug", "implement", "design", "strategy", "in detail")
+        if any(term in text for term in complexity_terms):
+            return False
         return any(term in text for term in lightweight_terms)
 
     def _ask_local_ai(self, command: str) -> AgentResponse:
