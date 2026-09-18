@@ -55,3 +55,69 @@ def test_simple_prompt_is_not_marked_complex():
 
 def test_general_conversation_uses_router_instead_of_direct_local_fast_path():
     assert CommandAgent._should_use_local_ai("What is the difference between TCP and UDP?") is False
+
+
+
+def test_local_only_calls_local_engine_without_availability_preflight(monkeypatch) -> None:
+    from app.ai.provider import AIProvider
+    from app.ai.local_engine import LocalAIError
+    from app.ai.router import SmartAIRouter
+
+    class FakeCloud:
+        configured = True
+        provider = "Fake Cloud"
+
+        def chat(self, prompt, system):
+            raise AssertionError("Cloud AI must not be called in Local-only mode.")
+
+        def _protocol(self):
+            return "Fake Cloud"
+
+    class FakeLocal:
+        enabled = True
+
+        def available(self):
+            return False
+
+        def chat(self, prompt, system):
+            return "Local answer"
+
+    monkeypatch.setenv("AI_ROUTING_MODE", "local-only")
+    router = SmartAIRouter(cloud_factory=FakeCloud, local_factory=FakeLocal)
+    result = router.chat("Explain this simply.")
+
+    assert result.provider == "local"
+    assert result.text == "Local answer"
+
+
+def test_local_only_reports_actual_local_error(monkeypatch) -> None:
+    from app.ai.router import SmartAIRouter
+
+    class FakeCloud:
+        configured = True
+        provider = "Fake Cloud"
+
+        def chat(self, prompt, system):
+            raise AssertionError("Cloud AI must not be called in Local-only mode.")
+
+        def _protocol(self):
+            return "Fake Cloud"
+
+    class FakeLocal:
+        enabled = True
+
+        def available(self):
+            return False
+
+        def chat(self, prompt, system):
+            raise RuntimeError("Ollama is not running.")
+
+    monkeypatch.setenv("AI_ROUTING_MODE", "local-only")
+    router = SmartAIRouter(cloud_factory=FakeCloud, local_factory=FakeLocal)
+
+    try:
+        router.chat("Hello")
+    except Exception as exc:
+        assert "Ollama is not running." in str(exc)
+    else:
+        raise AssertionError("Expected the local error to be raised.")
