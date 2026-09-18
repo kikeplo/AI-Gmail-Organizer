@@ -10,6 +10,27 @@ from PySide6.QtCore import QObject, Signal, Slot
 from app.agent.commands import AgentResponse, CommandAgent
 
 
+
+class FeedbackWorker(QThread):
+    """Assess an unhelpful answer with Cloud AI without blocking the GUI."""
+
+    finished = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, agent: CommandAgent, command: str, response: str) -> None:
+        super().__init__()
+        self.agent = agent
+        self.command = command
+        self.response = response
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            self.finished.emit(self.agent.assess_response(self.command, self.response))
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
 class CommandWorker(QObject):
     """Run an agent command outside the Qt GUI thread and report progress."""
 
