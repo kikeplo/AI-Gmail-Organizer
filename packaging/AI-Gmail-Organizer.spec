@@ -9,8 +9,11 @@ if project_root.name.casefold() == 'packaging':
 
 hiddenimports = [
     'win32api', 'win32con', 'win32gui', 'win32process', 'comtypes', 'comtypes.client',
-    'app.windows.action_router', 'app.windows.tools', 'app.windows.ui_automation',
 ]
+try:
+    hiddenimports += collect_submodules('app.windows')
+except Exception:
+    pass
 for package in ('pyautogui', 'pyscreeze', 'pytweening', 'pymsgbox', 'mouseinfo', 'PIL', 'pywinauto', 'playwright'):
     try:
         hiddenimports += collect_submodules(package)
