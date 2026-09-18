@@ -125,7 +125,7 @@ class WindowsActionRouter:
                 body = original_body[: trailing.start()].strip()
 
         body = re.sub(r"^[\"']|[\"']$", "", body.strip()).strip()
-        body = re.sub(r"^(?:the|a)\\s+", "", body, count=1, flags=re.IGNORECASE).strip()
+        body = re.sub(r"^(?:the|a)\s+", "", body, count=1, flags=re.IGNORECASE).strip()
 
         latest = body.casefold() in {
             "latest", "latest file", "most recent", "most recent file", "newest", "newest file",
