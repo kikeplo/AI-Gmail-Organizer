@@ -33,6 +33,10 @@ class WindowsActionRouter:
             if any(term in text for term in ("what window", "active window", "focused window", "which window")):
                 return WindowActionResponse(self._describe_active_window(self.tools.get_last_external_window()), mode="windows_active_window")
 
+            if self._is_start_button_request(text):
+                self.tools.hotkey("winleft")
+                return WindowActionResponse("Opened the Windows Start menu.", mode="windows_start")
+
             file_target = self._file_request(command)
             if file_target:
                 target, location = file_target
@@ -150,6 +154,12 @@ class WindowsActionRouter:
 
         return body, location
 
+
+    @staticmethod
+    def _is_start_button_request(text: str) -> bool:
+        return bool(
+            re.search(r"\b(?:click|press|open|select)\s+(?:on\s+)?(?:the\s+)?(?:windows|start)\s*(?:button|menu)?\b", text)
+        ) or text in {"windows button", "start button"}
 
     @staticmethod
     def _desktop_app_request(command: str) -> tuple[str | None, bool]:
