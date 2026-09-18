@@ -1,6 +1,6 @@
 # AI Gmail Organizer
 
-**Current version: v3.13.8**
+**Current version: v3.13.9**
 
 Hybrid Windows desktop assistant for Gmail organization, natural-language desktop automation, local AI, browser automation, vision-assisted interaction, reusable skills, learned procedures, autonomous task planning, and explicit access permissions.
 
@@ -205,3 +205,4 @@ The distributed application is the same code for every user; user-specific crede
 - **v3.13.6** — further optimized local text and vision inference for practical desktop use
 - **v3.13.7** — added more universal natural-language Windows file and folder commands
 - **v3.13.8** — release hardening: synchronized version metadata and documentation, expanded release documentation, and CI unit-test coverage
+- **v3.13.9** — desktop automation fixes: safer vision coordinate mapping, stronger natural-language file/folder resolution, latest-file opening, and deterministic Windows Start-button handling
