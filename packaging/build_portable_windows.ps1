@@ -42,6 +42,10 @@ if (-not $InCI) {
     Write-Host 'CI mode: reusing preinstalled Python dependencies and Playwright runtime.'
 }
 
+Write-Host 'Validating application Python sources...' -ForegroundColor Cyan
+& $Python -c "from pathlib import Path; import ast; files=list(Path('app').rglob('*.py')); [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in files]; print(f'Validated {len(files)} application Python files.')"
+if ($LASTEXITCODE -ne 0) { throw 'Application source syntax validation failed.' }
+
 Write-Host 'Building portable application folder...' -ForegroundColor Cyan
 & $Python -m PyInstaller packaging\AI-Gmail-Organizer.spec --clean --noconfirm
 if ($LASTEXITCODE -ne 0) { throw 'PyInstaller failed.' }
