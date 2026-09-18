@@ -94,15 +94,28 @@ class SmartAIRouter:
         attempted_local = False
         local_only = self._local_only()
 
+        if local_only:
+            # Local-only must attempt the local engine directly so a stopped
+            # runtime or missing model produces the real local error instead
+            # of the generic "unavailable" message.
+            attempted_local = True
+            local = self._call_local(prompt, system)
+            if local is not None:
+                return local
+            last_message = self.states["local"].last_error or last_message
+            if not last_message:
+                try:
+                    last_message = str(self.local.status().get("reason", "")).strip()
+                except Exception:
+                    pass
+            raise AIProviderError(last_message or "Local AI is required, but it is unavailable.")
+
         if self._local_first(prompt) and self.local.available():
             attempted_local = True
             local = self._call_local(prompt, system)
             if local is not None:
                 return local
             last_message = self.states["local"].last_error or last_message
-
-        if local_only:
-            raise AIProviderError(last_message if attempted_local else "Local AI is required, but it is unavailable.")
 
         if self._is_complex_prompt(prompt):
             candidates = ["cloud"] if self.cloud.configured else []
