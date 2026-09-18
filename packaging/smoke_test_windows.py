@@ -23,25 +23,28 @@ def check_imports() -> None:
 
 
 def check_packaged_app_modules() -> None:
-    matches = list(APP_DIR.rglob("action_router.py")) + list(APP_DIR.rglob("action_router.pyc"))
+    expected = [
+        APP_DIR / "app" / "windows" / "action_router.py",
+        APP_DIR / "_internal" / "app" / "windows" / "action_router.py",
+    ]
+    matches = [path for path in expected if path.is_file()]
+    matches.extend(APP_DIR.rglob("app/windows/action_router.pyc"))
     if not matches:
         raise RuntimeError(
-            "The portable package is missing app/windows/action_router.py or action_router.pyc. "
-            "The application's Windows action router was not collected."
+            "The portable package does not contain app/windows/action_router.py "
+            "or action_router.pyc."
         )
-    required = {
-        "tools": list(APP_DIR.rglob("tools.py")) + list(APP_DIR.rglob("tools.pyc")),
-        "ui_automation": list(APP_DIR.rglob("ui_automation.py")) + list(APP_DIR.rglob("ui_automation.pyc")),
-    }
-    missing = [name for name, files in required.items() if not files]
-    if missing:
-        raise RuntimeError(
-            "The portable package is missing application Windows modules: "
-            + ", ".join(missing)
-        )
+
+    required = ("tools.py", "ui_automation.py")
+    for filename in required:
+        found = list(APP_DIR.rglob(filename))
+        if not any("/app/windows/" in str(path).replace("\\", "/") for path in found):
+            raise RuntimeError(
+                f"The portable package is missing app/windows/{filename}."
+            )
+
     print("Packaged application modules found:")
-    for path in matches[:1]:
-        print(f"  action_router: {path}")
+    print(f"  action_router: {matches[0]}")
 
 
 def find_chrome() -> Path:
@@ -67,9 +70,11 @@ def check_exe_starts() -> None:
     env = os.environ.copy()
     process = subprocess.Popen([str(EXE)], cwd=str(APP_DIR), env=env)
     try:
-        time.sleep(4)
+        time.sleep(5)
         if process.poll() is not None:
-            raise RuntimeError(f"Packaged EXE exited immediately with code {process.returncode}.")
+            raise RuntimeError(
+                f"Packaged EXE exited immediately with code {process.returncode}."
+            )
     finally:
         if process.poll() is None:
             process.terminate()
