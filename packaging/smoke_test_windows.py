@@ -23,28 +23,37 @@ def check_imports() -> None:
 
 
 def check_packaged_app_modules() -> None:
-    expected = [
-        APP_DIR / "app" / "windows" / "action_router.py",
-        APP_DIR / "_internal" / "app" / "windows" / "action_router.py",
-    ]
-    matches = [path for path in expected if path.is_file()]
-    matches.extend(APP_DIR.rglob("app/windows/action_router.pyc"))
-    if not matches:
+    action_sources = list(APP_DIR.rglob("action_router.py"))
+    action_bytecode = list(APP_DIR.rglob("action_router.pyc"))
+    if not action_sources and not action_bytecode:
         raise RuntimeError(
             "The portable package does not contain app/windows/action_router.py "
             "or action_router.pyc."
         )
 
+    for source in action_sources:
+        source_text = source.read_text(encoding="utf-8")
+        try:
+            compile(source_text, str(source), "exec")
+        except SyntaxError as exc:
+            raise RuntimeError(
+                f"Packaged Windows action router has invalid Python syntax: {source}: {exc}"
+            ) from exc
+
     required = ("tools.py", "ui_automation.py")
     for filename in required:
-        found = list(APP_DIR.rglob(filename))
-        if not any("/app/windows/" in str(path).replace("\\", "/") for path in found):
+        found = [
+            path for path in APP_DIR.rglob(filename)
+            if "app/windows" in str(path).replace("\\", "/")
+        ]
+        if not found:
             raise RuntimeError(
                 f"The portable package is missing app/windows/{filename}."
             )
 
     print("Packaged application modules found:")
-    print(f"  action_router: {matches[0]}")
+    for path in (action_sources or action_bytecode)[:1]:
+        print(f"  action_router: {path}")
 
 
 def find_chrome() -> Path:
