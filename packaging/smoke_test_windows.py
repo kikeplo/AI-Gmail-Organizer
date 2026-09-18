@@ -63,6 +63,7 @@ def main() -> int:
     if not EXE.is_file():
         raise RuntimeError(f"Missing application EXE: {EXE}")
     check_imports()
+    check_packaged_app_modules()
     chrome = find_chrome()
     check_playwright(chrome)
     check_exe_starts()
