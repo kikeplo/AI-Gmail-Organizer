@@ -242,11 +242,32 @@ class SmartAIRouter:
             return "cloud"
         return self.priority[0] if self.priority else "local"
 
+    @staticmethod
+    def _is_complex_prompt(prompt: str) -> bool:
+        """Detect prompts that benefit from a larger cloud reasoning model."""
+        text = prompt.casefold().strip()
+        if not text:
+            return False
+        words = re.findall(r"\b\w+\b", text)
+        if len(words) >= 140 or "```" in text:
+            return True
+        complex_terms = (
+            "deeply", "in depth", "in-depth", "detailed analysis", "comprehensive",
+            "research", "compare", "comparison", "trade-off", "tradeoff", "architecture",
+            "debug", "debugging", "write code", "implement", "refactor", "optimize",
+            "step-by-step", "step by step", "multiple steps", "reason through",
+            "prove that", "derive", "analyze", "analyse", "evaluate", "investigate",
+            "why does", "why is", "how should i", "how would you design", "long answer",
+            "essay", "report", "technical", "strategy", "pros and cons",
+        )
+        return any(term in text for term in complex_terms)
     def _local_first(self, prompt: str) -> bool:
         text = prompt.casefold()
         mode = self._routing_mode()
         if mode in {"cloud-first", "local-only"}:
             return mode == "local-only"
+        if self._is_complex_prompt(prompt):
+            return False
         simple_terms = ("classify", "categorize", "categorise", "extract", "parse", "json", "which window", "active window", "is this", "remember", "what do you remember")
         return mode == "local-first" or (mode == "balanced" and any(term in text for term in simple_terms))
 
