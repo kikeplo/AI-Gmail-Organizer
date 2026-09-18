@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 
 from PySide6.QtCore import Qt, QThread, QTimer
@@ -16,7 +17,7 @@ from app.memory.store import MemoryStore
 from app.ui.dashboard import HistoryView, UsageView
 from app.ui.desktop_access import DesktopAccessDialog
 from app.ui.setup_dialog import SetupDialog
-from app.ui.worker import CommandWorker
+from app.ui.worker import CommandWorker, FeedbackWorker
 from app.version import APP_VERSION_TEXT
 
 
@@ -38,6 +39,8 @@ class OverlayWindow(QMainWindow):
         self._thread = None
         self._worker = None
         self._settings_dialog = None
+        self._feedback_threads: set[QThread] = set()
+        self._feedback_workers: set[FeedbackWorker] = set()
         self._build_ui()
         self._agent.windows.set_own_window(int(self.winId()))
         self._foreground_timer = QTimer(self)
@@ -110,6 +113,9 @@ class OverlayWindow(QMainWindow):
             QPushButton#sendButton { color: #FFFFFF; background: #4F6CF7; border: none; border-radius: 13px; padding: 11px 20px; font-weight: 700; }
             QPushButton#sendButton:hover { background: #607BFA; }
             QPushButton#sendButton:disabled { background: #30384E; color: #9AA4B4; }
+            QPushButton#feedbackButton { color: #8F9AAD; background: transparent; border: none; padding: 3px 5px; font-size: 13px; }
+            QPushButton#feedbackButton:hover { color: #F1F5F9; background: rgba(255,255,255,10); border-radius: 7px; }
+            QPushButton#feedbackButton:checked { color: #FFFFFF; background: rgba(79,108,247,70); border-radius: 7px; }
         """
 
     def _build_chat_page(self) -> QWidget:
@@ -132,8 +138,105 @@ class OverlayWindow(QMainWindow):
     def _refresh_dashboard(self,index:int)->None:
         if index==1: self.history_view.store=self._memory; self.history_view.refresh()
         elif index==2: self.usage_view.store=self._memory; self.usage_view.refresh()
-    def _add_message(self,role:str,text:str)->None:
-        label=QLabel(self._clean_ai_text(text) if role=="assistant" else text); label.setObjectName("messageUser" if role=="user" else "messageAssistant"); label.setWordWrap(True); label.setTextInteractionFlags(Qt.TextSelectableByMouse); label.setSizePolicy(QSizePolicy.Expanding,QSizePolicy.Minimum); self.messages.insertWidget(self.messages.count()-1,label); self.scroll.verticalScrollBar().setValue(self.scroll.verticalScrollBar().maximum())
+    def _add_message(self, role: str, text: str, *, feedback: bool = false, command: str = "", source: str = "") -> None:
+        cleaned = self._clean_ai_text(text) if role == "assistant" else text
+        if role != "assistant" or not feedback:
+            label = QLabel(cleaned)
+            label.setObjectName("messageUser" if role == "user" else "messageAssistant")
+            label.setWordWrap(True)
+            label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+            self.messages.insertWidget(self.messages.count() - 1, label)
+            self.scroll.verticalScrollBar().setValue(self.scroll.verticalScrollBar().maximum())
+            return
+
+        card = QWidget()
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(0, 0, 0, 0)
+        card_layout.setSpacing(4)
+
+        label = QLabel(cleaned)
+        label.setObjectName("messageAssistant")
+        label.setWordWrap(True)
+        label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        card_layout.addWidget(label)
+
+        feedback_row = QHBoxLayout()
+        feedback_row.setContentsMargins(8, 0, 0, 0)
+        feedback_row.setSpacing(2)
+        up = QPushButton("👍")
+        down = QPushButton("👎")
+        for button in (up, down):
+            button.setObjectName("feedbackButton")
+            button.setCheckable(True)
+            button.setFixedSize(34, 28)
+            button.setCursor(Qt.PointingHandCursor)
+        meta = QLabel(source or "AI response")
+        meta.setStyleSheet("color: #778399; font-size: 10px; padding-left: 6px;")
+        feedback_row.addWidget(up)
+        feedback_row.addWidget(down)
+        feedback_row.addWidget(meta)
+        feedback_row.addStretch()
+        card_layout.addLayout(feedback_row)
+
+        def rate(rating: str) -> None:
+            up.setEnabled(False)
+            down.setEnabled(False)
+            (up if rating == "up" else down).setChecked(True)
+            try:
+                self._memory.record_feedback(command, cleaned, rating, source or "assistant")
+            except Exception:
+                pass
+            if rating == "up":
+                meta.setText("Thanks — feedback saved locally.")
+                return
+
+            enabled = os.getenv("AI_FEEDBACK_ESCALATION", "0").strip().lower() in {"1", "true", "yes", "on"}
+            cloud_allowed = self._agent.ai_router.cloud.configured and not self._agent.ai_router._local_only()
+            if not enabled or not cloud_allowed:
+                meta.setText("Feedback saved locally. Cloud review is disabled.")
+                return
+
+            meta.setText("Cloud AI is reassessing this answer…")
+            self._start_feedback_review(command, cleaned, meta)
+
+        up.clicked.connect(lambda: rate("up"))
+        down.clicked.connect(lambda: rate("down"))
+
+        self.messages.insertWidget(self.messages.count() - 1, card)
+        self.scroll.verticalScrollBar().setValue(self.scroll.verticalScrollBar().maximum())
+
+    def _start_feedback_review(self, command: str, response: str, status_label: QLabel) -> None:
+        thread = QThread(self)
+        worker = FeedbackWorker(self._agent, command, response)
+        worker.moveToThread(thread)
+        self._feedback_threads.add(thread)
+        self._feedback_workers.add(worker)
+        thread.started.connect(worker.run)
+        worker.finished.connect(lambda reviewed: self._on_feedback_reviewed(reviewed, status_label))
+        worker.failed.connect(lambda message: self._on_feedback_failed(message, status_label))
+        worker.finished.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        worker.failed.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(lambda: self._feedback_threads.discard(thread))
+        thread.finished.connect(lambda: self._feedback_workers.discard(worker))
+        thread.start()
+
+    def _on_feedback_reviewed(self, text: str, status_label: QLabel) -> None:
+        reviewed = self._clean_ai_text(text)
+        if reviewed:
+            status_label.setText("Cloud AI reassessment complete.")
+            self._add_message("assistant", "Cloud-reviewed answer:\n\n" + reviewed)
+        else:
+            status_label.setText("Cloud AI returned no improved answer.")
+
+    def _on_feedback_failed(self, message: str, status_label: QLabel) -> None:
+        status_label.setText("Cloud review failed; the original answer remains unchanged.")
+        self.hint.setText(message)
+
     def _submit(self,command:str)->None: self.tabs.setCurrentIndex(0); self.command_input.setText(command); self._on_send()
     def _needs_visual_access(self,command:str)->bool:
         lowered=command.casefold(); return self._agent._looks_like_gmail_ui_task(lowered) or self._agent._looks_like_visual_task(lowered)
@@ -147,6 +250,7 @@ class OverlayWindow(QMainWindow):
         command=self.command_input.text().strip()
         if not command or self._thread is not None: return
         if self._needs_visual_access(command) and not self._request_visual_access(): return
+        self._current_command = command
         self._add_message("user",command); self.command_input.clear(); self.send_button.setEnabled(False); self.send_button.setText("Working…"); self.status.setText("● Working"); self.hint.setText("Working in the background. You can pause or stop a visual task at any time."); self.pause_button.setEnabled(True); self.stop_button.setEnabled(True)
         self._thread=QThread(self); self._worker=CommandWorker(self._agent,command); self._worker.moveToThread(self._thread); self._thread.started.connect(self._worker.run); self._worker.status.connect(self._on_worker_status); self._worker.finished.connect(self._on_worker_finished); self._worker.failed.connect(self._on_worker_failed); self._worker.finished.connect(self._thread.quit); self._worker.failed.connect(self._thread.quit); self._thread.finished.connect(self._cleanup_worker); self._thread.start()
     def _on_worker_status(self,message:str)->None: self.status.setText("● "+message); self.hint.setText(message)
@@ -157,11 +261,16 @@ class OverlayWindow(QMainWindow):
     def _stop_task(self)->None:
         if self._thread is None: return
         self._agent.stop_task(); self.stop_button.setEnabled(False); self.pause_button.setEnabled(False); self.status.setText("● Stopping…"); self.hint.setText("Stopping the current task…")
-    def _on_worker_finished(self,response)->None:
-        self._add_message("assistant",response.text); self._pending_action=response.pending_action
+    def _on_worker_finished(self, response) -> None:
+        command = getattr(self, "_current_command", "")
+        is_ai_reply = response.mode == "local_ai" or response.mode.startswith("ai:")
+        source = "Local AI" if response.mode == "local_ai" or response.mode == "ai:Local AI" else "Cloud AI"
+        self._add_message("assistant", response.text, feedback=is_ai_reply, command=command, source=source)
+        self._pending_action = response.pending_action
         if response.mode=="confirmation" and self._pending_action is not None:
             reply=QMessageBox.question(self,"Confirm action",response.text,QMessageBox.Yes|QMessageBox.No,QMessageBox.No); follow_up=self._agent.confirm_action(self._pending_action,reply==QMessageBox.Yes); self._add_message("assistant",follow_up.text); self._pending_action=None
         self._set_ready_state()
+
     def _on_worker_failed(self,message:str)->None: self._add_message("assistant",f"The command could not be completed.\n\n{message}"); self._set_ready_state()
     def _set_ready_state(self)->None: self.send_button.setEnabled(True); self.send_button.setText("Send"); self.status.setText("● Ready"); self.hint.setText("Gmail changes require confirmation. Desktop actions are performed on your local Windows session. Local memories stay on this device."); self.pause_button.setEnabled(False); self.stop_button.setEnabled(False); self.pause_button.setText("⏸ Pause")
     def _cleanup_worker(self)->None:
