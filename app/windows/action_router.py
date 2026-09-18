@@ -90,7 +90,8 @@ class WindowsActionRouter:
         text = command.strip()
         lowered = text.casefold()
         text = re.sub(r"^\s*(?:(?:can|could|would)\s+you|please)\s+", "", text, count=1, flags=re.IGNORECASE).strip()
-\n        verb = re.match(r"^\s*(?:open|launch|start|run|double[- ]click|show)\s+(.+?)\s*$", text, re.IGNORECASE)
+
+        verb = re.match(r"^\s*(?:open|launch|start|run|double[- ]click|show)\s+(.+?)\s*$", text, re.IGNORECASE)
         if not verb:
             return None
 
