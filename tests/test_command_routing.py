@@ -37,3 +37,17 @@ def test_start_button_command_uses_windows_router(monkeypatch) -> None:
     assert response.mode == "windows_start"
     assert response.text == "Opened the Windows Start menu."
     assert calls == ["Click on Windows"]
+
+
+def test_complex_prompt_is_detected_for_cloud_routing():
+    from app.ai.router import SmartAIRouter
+
+    assert SmartAIRouter._is_complex_prompt(
+        "Please compare these architectures in depth, explain the trade-offs, and propose a step-by-step implementation strategy."
+    ) is True
+
+
+def test_simple_prompt_is_not_marked_complex():
+    from app.ai.router import SmartAIRouter
+
+    assert SmartAIRouter._is_complex_prompt("What is a neural network?") is False
