@@ -30,7 +30,21 @@ if icon.exists():
     datas.append((str(icon), 'assets'))
 runtime_hook = project_root / 'packaging' / 'runtime_hooks' / 'playwright_portable.py'
 
-a = Analysis([str(project_root / 'main.py')], pathex=[str(project_root)], binaries=[], datas=datas, hiddenimports=hiddenimports, hookspath=[], hooksconfig={}, runtime_hooks=[str(runtime_hook)], excludes=[], noarchive=False, module_collection_mode={'app': 'pyc'})
+# Keep the application's own Python modules as ordinary files rather than
+# embedding them in PYZ. This makes imports such as app.windows.action_router
+# resolve through the normal frozen filesystem importer in the onedir build.
+a = Analysis(
+    [str(project_root / 'main.py')],
+    pathex=[str(project_root)],
+    binaries=[],
+    datas=datas,
+    hiddenimports=hiddenimports,
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[str(runtime_hook)],
+    excludes=[],
+    noarchive=True,
+)
 pyz = PYZ(a.pure)
 exe = EXE(pyz, a.scripts, a.binaries, a.datas, [], name='AI-Gmail-Organizer', debug=False, bootloader_ignore_signals=False, strip=False, upx=True, console=False)
 coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=True, name='AI-Gmail-Organizer')
