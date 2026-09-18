@@ -19,3 +19,21 @@ def test_mode_counts(tmp_path):
     store.remember("e", "f", "gmail")
 
     assert store.mode_counts() == {"demo": 2, "gmail": 1}
+
+
+def test_feedback_and_conversation_context(tmp_path):
+    store = MemoryStore(tmp_path / "memory.sqlite3")
+    store.remember("What is RAG?", "Retrieval augmented generation.", "ai:Local AI")
+    store.remember("Explain that more.", "It combines retrieval with generation.", "ai:Cloud AI")
+
+    feedback_id = store.record_feedback(
+        "Explain that more.",
+        "It combines retrieval with generation.",
+        "down",
+        "Cloud AI",
+    )
+
+    assert feedback_id > 0
+    context = store.recent_context(limit=2, max_chars=1000)
+    assert "What is RAG?" in context
+    assert "Explain that more." in context
