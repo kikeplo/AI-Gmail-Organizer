@@ -29,7 +29,7 @@ if (-not $InCI) {
     if ($LASTEXITCODE -ne 0) { throw 'Failed to upgrade pip.' }
     & $Python -m pip install -e .
     if ($LASTEXITCODE -ne 0) { throw 'Failed to install project dependencies.' }
-    & $Python -m pip install 'pyinstaller>=6,<7'
+    & $Python -m pip install 'pyinstaller>=6.22.3,<7'
     if ($LASTEXITCODE -ne 0) { throw 'Failed to install PyInstaller.' }
 
     if (Test-Path $PlaywrightPath) { Remove-Item $PlaywrightPath -Recurse -Force }
