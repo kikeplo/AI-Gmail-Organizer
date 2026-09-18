@@ -55,6 +55,18 @@ class MemoryStore:
                 )
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS ai_feedback (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    command TEXT NOT NULL,
+                    response TEXT NOT NULL,
+                    rating TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
             connection.commit()
 
     def remember(self, command: str, response: str, mode: str) -> int:
@@ -66,6 +78,36 @@ class MemoryStore:
             )
             connection.commit()
             return int(cursor.lastrowid)
+
+    def record_feedback(self, command: str, response: str, rating: str, source: str = "assistant") -> int:
+        normalized = rating.strip().lower()
+        if normalized not in {"up", "down"}:
+            raise ValueError("Feedback rating must be 'up' or 'down'.")
+        timestamp = datetime.now(timezone.utc).isoformat()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "INSERT INTO ai_feedback(command, response, rating, source, created_at) VALUES (?, ?, ?, ?, ?)",
+                (command, response, normalized, source, timestamp),
+            )
+            connection.commit()
+            return int(cursor.lastrowid)
+
+    def recent_context(self, limit: int = 6, max_chars: int = 5000) -> str:
+        """Return a compact recent conversation window for conversational AI."""
+        interactions = list(reversed(self.recent(limit)))
+        lines: list[str] = []
+        total = 0
+        for item in interactions:
+            if not item.command and not item.response:
+                continue
+            block = f"User: {item.command}\nAssistant: {item.response}"
+            remaining = max_chars - total
+            if remaining <= 0:
+                break
+            block = block[:remaining]
+            lines.append(block)
+            total += len(block) + 2
+        return "Recent conversation:\n\n" + "\n\n".join(lines) if lines else ""
 
     def recent(self, limit: int = 10) -> list[Interaction]:
         with self._connect() as connection:
