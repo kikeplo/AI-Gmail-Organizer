@@ -11,7 +11,7 @@ from app.agent.commands import AgentResponse, CommandAgent
 
 
 
-class FeedbackWorker(QThread):
+class FeedbackWorker(QObject):
     """Assess an unhelpful answer with Cloud AI without blocking the GUI."""
 
     finished = Signal(str)
