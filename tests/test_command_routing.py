@@ -189,3 +189,43 @@ def test_local_only_never_turns_escalation_marker_into_failure(monkeypatch) -> N
 
     assert result.provider == "local"
     assert result.text == "I couldn't determine a reliable local answer."
+
+
+def test_router_cancel_calls_provider_cancellation(monkeypatch) -> None:
+    from app.ai.router import SmartAIRouter
+
+    class FakeProvider:
+        configured = True
+        provider = "Fake"
+
+        def __init__(self):
+            self.cancelled = False
+            self.started = False
+
+        def begin_operation(self):
+            self.started = True
+
+        def cancel(self):
+            self.cancelled = True
+
+        def is_cancelled(self):
+            return self.cancelled
+
+        def chat(self, prompt, system):
+            return "answer"
+
+        def _protocol(self):
+            return "Fake"
+
+    monkeypatch.setenv("AI_ROUTING_MODE", "local-only")
+    cloud = FakeProvider()
+    local = FakeProvider()
+    router = SmartAIRouter(cloud_factory=lambda: cloud, local_factory=lambda: local)
+
+    router.begin_operation()
+    router.cancel()
+
+    assert local.started is True
+    assert cloud.started is True
+    assert local.cancelled is True
+    assert cloud.cancelled is True
