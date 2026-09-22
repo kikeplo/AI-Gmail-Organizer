@@ -110,7 +110,8 @@ def test_local_only_reports_actual_local_error(monkeypatch) -> None:
             return False
 
         def chat(self, prompt, system):
-            raise RuntimeError("Ollama is not running.")
+            from app.ai.local_engine import LocalAIError
+            raise LocalAIError("Ollama is not running.")
 
     monkeypatch.setenv("AI_ROUTING_MODE", "local-only")
     router = SmartAIRouter(cloud_factory=FakeCloud, local_factory=FakeLocal)
@@ -121,3 +122,70 @@ def test_local_only_reports_actual_local_error(monkeypatch) -> None:
         assert "Ollama is not running." in str(exc)
     else:
         raise AssertionError("Expected the local error to be raised.")
+
+
+def test_local_only_does_not_send_escalation_instruction(monkeypatch) -> None:
+    from app.ai.router import SmartAIRouter
+
+    class FakeCloud:
+        configured = True
+        provider = "Fake Cloud"
+
+        def chat(self, prompt, system):
+            raise AssertionError("Cloud AI must not be called in Local-only mode.")
+
+        def _protocol(self):
+            return "Fake Cloud"
+
+    class FakeLocal:
+        enabled = True
+
+        def __init__(self):
+            self.system = ""
+
+        def available(self):
+            return True
+
+        def chat(self, prompt, system):
+            self.system = system
+            return "Hey! How can I help?"
+
+    monkeypatch.setenv("AI_ROUTING_MODE", "local-only")
+    local = FakeLocal()
+    router = SmartAIRouter(cloud_factory=FakeCloud, local_factory=lambda: local)
+    result = router.chat("Hey")
+
+    assert result.provider == "local"
+    assert result.text == "Hey! How can I help?"
+    assert "[ESCALATE]" not in local.system
+
+
+def test_local_only_never_turns_escalation_marker_into_failure(monkeypatch) -> None:
+    from app.ai.router import SmartAIRouter
+
+    class FakeCloud:
+        configured = True
+        provider = "Fake Cloud"
+
+        def chat(self, prompt, system):
+            raise AssertionError("Cloud AI must not be called in Local-only mode.")
+
+        def _protocol(self):
+            return "Fake Cloud"
+
+    class FakeLocal:
+        enabled = True
+
+        def available(self):
+            return True
+
+        def chat(self, prompt, system):
+            return "[ESCALATE]"
+
+    monkeypatch.setenv("AI_ROUTING_MODE", "local-only")
+    router = SmartAIRouter(cloud_factory=FakeCloud, local_factory=FakeLocal)
+
+    result = router.chat("Hey")
+
+    assert result.provider == "local"
+    assert result.text == "I couldn't determine a reliable local answer."
