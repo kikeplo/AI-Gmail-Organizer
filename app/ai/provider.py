@@ -6,6 +6,7 @@ import json
 import os
 import random
 import re
+import threading
 import time
 from dataclasses import dataclass
 from urllib.error import HTTPError, URLError
@@ -14,6 +15,10 @@ from urllib.request import Request, urlopen
 
 class AIProviderError(RuntimeError):
     pass
+
+
+class AICancelled(AIProviderError):
+    """Raised when the user explicitly stops an active AI request."""
 
 
 @dataclass(frozen=True)
@@ -63,6 +68,30 @@ class AIProvider:
         self.api_keys = configured_keys
         self._key_cooldowns: dict[str, float] = {key: 0.0 for key in self.api_keys}
         self._active_key_index = 0
+        self._cancel_event = threading.Event()
+        self._active_response = None
+        self._active_lock = threading.Lock()
+
+    def begin_operation(self) -> None:
+        with self._active_lock:
+            self._cancel_event.clear()
+
+    def cancel(self) -> None:
+        self._cancel_event.set()
+        with self._active_lock:
+            response = self._active_response
+        if response is not None:
+            try:
+                response.close()
+            except Exception:
+                pass
+
+    def is_cancelled(self) -> bool:
+        return self._cancel_event.is_set()
+
+    def _check_cancelled(self) -> None:
+        if self._cancel_event.is_set():
+            raise AICancelled("AI request stopped by user.")
 
     @property
     def configured(self) -> bool:
@@ -100,21 +129,48 @@ class AIProvider:
         return headers
 
     def _request(self, method: str, url: str, body: dict | None = None, api_key: str | None = None) -> dict:
+        self._check_cancelled()
         data = json.dumps(body).encode("utf-8") if body is not None else None
         request = Request(url, data=data, headers=self._headers(body is not None, api_key), method=method)
+        response = None
         try:
-            with urlopen(request, timeout=90) as response:
-                raw = response.read().decode("utf-8")
-                return json.loads(raw) if raw else {}
+            response = urlopen(request, timeout=90)
+            with self._active_lock:
+                self._active_response = response
+            self._check_cancelled()
+            raw = response.read().decode("utf-8")
+            self._check_cancelled()
+            return json.loads(raw) if raw else {}
+        except AICancelled:
+            raise
         except HTTPError as exc:
+            if self._cancel_event.is_set():
+                raise AICancelled("AI request stopped by user.") from exc
             detail = exc.read().decode("utf-8", errors="replace")
             raise AIProviderError(f"HTTP {exc.code}: {detail}") from exc
         except URLError as exc:
+            if self._cancel_event.is_set():
+                raise AICancelled("AI request stopped by user.") from exc
             raise AIProviderError(f"Connection error: {exc.reason}") from exc
         except TimeoutError as exc:
+            if self._cancel_event.is_set():
+                raise AICancelled("AI request stopped by user.") from exc
             raise AIProviderError(f"Connection timeout: {exc}") from exc
+        except (OSError, ValueError) as exc:
+            if self._cancel_event.is_set():
+                raise AICancelled("AI request stopped by user.") from exc
+            raise AIProviderError(f"AI connection failed: {exc}") from exc
         except json.JSONDecodeError as exc:
             raise AIProviderError("The AI provider returned invalid JSON.") from exc
+        finally:
+            with self._active_lock:
+                if response is self._active_response:
+                    self._active_response = None
+            if response is not None:
+                try:
+                    response.close()
+                except Exception:
+                    pass
 
     @staticmethod
     def _error_code(error: str) -> int | None:
@@ -133,8 +189,9 @@ class AIProvider:
         return code in {401, 403, 408, 429, 500, 502, 503, 504} or "quota" in text or "resource_exhausted" in text or "rate limit" in text
 
     def _sleep_before_retry(self, attempt: int) -> None:
-        delay = self.retry_base_seconds * (2 ** attempt) + random.uniform(0.0, 0.25)
-        time.sleep(min(delay, 5.0))
+        delay = min(self.retry_base_seconds * (2 ** attempt) + random.uniform(0.0, 0.25), 5.0)
+        if self._cancel_event.wait(delay):
+            raise AICancelled("AI request stopped by user.")
 
     def _available_keys(self) -> list[str]:
         if not self.api_keys:
@@ -235,6 +292,7 @@ class AIProvider:
         return str(content).strip()
 
     def chat(self, user_text: str, system_text: str = "") -> str:
+        self._check_cancelled()
         last_error: str | None = None
         for model in self._model_candidates():
             for key in self._available_keys():
@@ -278,6 +336,7 @@ class AIProvider:
         return result
 
     def vision_json(self, prompt: str, image_base64: str) -> dict:
+        self._check_cancelled()
         last_error: str | None = None
         for model in self._model_candidates(require_vision=True):
             for key in self._available_keys():
