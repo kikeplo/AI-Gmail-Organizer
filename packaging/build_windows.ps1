@@ -25,7 +25,7 @@ Write-Host "Using Python: $Python"
 if ($LASTEXITCODE -ne 0) { throw 'Failed to upgrade pip.' }
 & $Python -m pip install -e .
 if ($LASTEXITCODE -ne 0) { throw 'Failed to install project dependencies.' }
-& $Python -m pip install 'pyinstaller>=6,<7'
+& $Python -m pip install 'pyinstaller>=6.22.3,<7'
 if ($LASTEXITCODE -ne 0) { throw 'Failed to install PyInstaller.' }
 
 # Keep the Chromium runtime inside the project so the PyInstaller spec can bundle it.
@@ -43,10 +43,13 @@ Write-Host 'Building self-contained EXE...' -ForegroundColor Cyan
 & $Python -m PyInstaller packaging\AI-Gmail-Organizer.spec --clean --noconfirm
 if ($LASTEXITCODE -ne 0) { throw 'PyInstaller failed. No valid EXE was produced.' }
 
-$Exe = Join-Path $Root 'dist\AI-Gmail-Organizer.exe'
-if (-not (Test-Path $Exe)) { throw 'Build finished without producing dist\AI-Gmail-Organizer.exe.' }
+$AppDir = Join-Path $Root 'dist\AI-Gmail-Organizer'
+$Exe = Join-Path $AppDir 'AI-Gmail-Organizer.exe'
+if (-not (Test-Path $AppDir)) { throw 'Build finished without producing dist\AI-Gmail-Organizer.' }
+if (-not (Test-Path $Exe)) { throw 'Build finished without producing the packaged AI-Gmail-Organizer.exe.' }
 
 Write-Host ''
 Write-Host 'Build complete.' -ForegroundColor Green
+Write-Host "Application folder: $AppDir"
 Write-Host "EXE: $Exe"
 Write-Host 'The packaged application includes the Python dependencies and bundled Chromium runtime.'
