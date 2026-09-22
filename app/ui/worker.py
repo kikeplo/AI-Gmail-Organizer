@@ -7,7 +7,7 @@ import time
 
 from PySide6.QtCore import QObject, Signal, Slot
 
-from app.agent.commands import AgentResponse, CommandAgent
+from app.agent.commands import AgentResponse, CommandAgent, CommandCancelled
 
 
 
@@ -36,6 +36,7 @@ class CommandWorker(QObject):
 
     finished = Signal(object)
     failed = Signal(str)
+    cancelled = Signal()
     status = Signal(str)
 
     def __init__(self, agent: CommandAgent, command: str) -> None:
@@ -72,8 +73,16 @@ class CommandWorker(QObject):
         try:
             self.status.emit("Starting…")
             response: AgentResponse = self.agent.respond(self.command, on_status=self.status.emit)
-            self.finished.emit(response)
+            if self.agent.is_cancelled():
+                self.cancelled.emit()
+            else:
+                self.finished.emit(response)
+        except CommandCancelled:
+            self.cancelled.emit()
         except Exception as exc:  # pragma: no cover
-            self.failed.emit(str(exc))
+            if self.agent.is_cancelled():
+                self.cancelled.emit()
+            else:
+                self.failed.emit(str(exc))
         finally:
             self._stop_heartbeat()
