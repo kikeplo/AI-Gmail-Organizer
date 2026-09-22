@@ -54,26 +54,27 @@ class GmailClient:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         elif not creds or not creds.valid:
-            client_id = os.getenv("GMAIL_CLIENT_ID", "").strip()
-            client_secret = os.getenv("GMAIL_CLIENT_SECRET", "").strip()
-            if client_id:
-                client_config = {
-                    "installed": {
-                        "client_id": client_id,
-                        "client_secret": client_secret or "",
-                        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                        "token_uri": "https://oauth2.googleapis.com/token",
-                        "redirect_uris": ["http://localhost"],
-                    }
-                }
-                flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
-            elif self.credentials_file.exists():
+            if self.credentials_file.exists():
                 flow = InstalledAppFlow.from_client_secrets_file(str(self.credentials_file), SCOPES)
             else:
-                raise FileNotFoundError(
-                    "Google sign-in is not configured. Set GMAIL_CLIENT_ID for the browser sign-in flow "
-                    "or place a Google OAuth desktop credentials.json in the app data folder."
-                )
+                client_id = os.getenv("GMAIL_CLIENT_ID", "").strip()
+                client_secret = os.getenv("GMAIL_CLIENT_SECRET", "").strip()
+                if client_id and client_secret:
+                    client_config = {
+                        "installed": {
+                            "client_id": client_id,
+                            "client_secret": client_secret,
+                            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                            "token_uri": "https://oauth2.googleapis.com/token",
+                            "redirect_uris": ["http://localhost"],
+                        }
+                    }
+                    flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
+                else:
+                    raise FileNotFoundError(
+                        "Google sign-in is not configured. Select the downloaded Desktop OAuth JSON "
+                        "file in the Gmail setup window."
+                    )
             creds = flow.run_local_server(port=0, access_type="offline", prompt="consent")
         self.token_file.write_text(creds.to_json(), encoding="utf-8")
         self._service = build("gmail", "v1", credentials=creds)
