@@ -1,6 +1,6 @@
 # AI Gmail Organizer
 
-**Current version: v3.14.5**
+**Current version: v3.14.11**
 
 Hybrid Windows desktop assistant for Gmail organization, natural-language desktop automation, local AI, browser automation, vision-assisted interaction, reusable skills, learned procedures, autonomous task planning, and explicit access permissions.
 
@@ -41,7 +41,7 @@ Hybrid Windows desktop assistant for Gmail organization, natural-language deskto
 
 ### Reliability and safety
 - Background execution with live working status
-- Safe cancellation for visual tasks so late model results do not execute stale desktop actions
+- Immediate Stop/cancellation for active AI requests, including interruption of local Ollama and Cloud AI HTTP requests
 - Confirmation gates for mutating Gmail operations
 - Per-user local configuration and data storage
 - Credentials, API keys, OAuth tokens, and local databases kept outside source control and the distributed application package
@@ -50,7 +50,7 @@ Hybrid Windows desktop assistant for Gmail organization, natural-language deskto
 
 The project can be built as a standalone Windows application. User credentials and API keys are not bundled into the application.
 
-On first launch, the app can collect optional AI settings and a Google OAuth client file. These are stored in the current Windows user's application-data directory under `%LOCALAPPDATA%\\AI Gmail Organizer`.
+On first launch, the app can collect optional AI settings. Gmail is configured through the guided Google OAuth setup, which imports the downloaded Desktop OAuth JSON. These settings and credentials are stored in the current Windows user's application-data directory under `%LOCALAPPDATA%\\AI Gmail Organizer`.
 
 Each Windows user has a separate configuration directory, OAuth token, API key configuration, and local SQLite database.
 
@@ -147,11 +147,12 @@ The UI handles presentation, status, and confirmation. The command layer routes 
 ### Gmail
 
 1. Enable the Gmail API in Google Cloud.
-2. Create an OAuth client for a Desktop app.
-3. Start the application and use the first-run setup dialog to select the downloaded OAuth JSON file.
-4. Complete Google's browser authorization flow when you first use a Gmail command.
+2. Configure the Google OAuth consent screen and add your account as a test user while the project is in Testing mode.
+3. Create an OAuth client for a Desktop app and download its JSON file.
+4. Start the application, choose **Select OAuth JSON**, and select the downloaded file.
+5. Click **Sign in with Google** and complete Google's browser authorization flow.
 
-The OAuth client file and resulting token are copied to the current user's local application-data directory and are not part of the repository.
+The OAuth client file and resulting token are copied to the current user's local application-data directory and are not part of the repository. The downloaded OAuth JSON is used as the complete client configuration; the application does not require users to paste a Client Secret into the UI.
 
 ### Local AI
 
