@@ -214,3 +214,7 @@ The distributed application is the same code for every user; user-specific crede
 - **v3.14.3** — converted the application and subpackages to explicit Python packages to prevent frozen-runtime namespace import failures
 - **v3.14.4** — collects the local `app` package as external `.pyc` modules in the portable build to avoid PYZ import-resolution failures
 - **v3.14.5** — uses a filesystem-based Python module layout for the onedir package and adds a smoke-test check for `app/windows/action_router.pyc`
+- **v3.14.6–v3.14.8** — hardened Windows packaging, deterministic application-module collection, source validation, and packaged smoke checks for frozen-runtime reliability
+- **v3.14.9** — fixed Local-only routing so local requests never escalate to Cloud AI, with regression coverage
+- **v3.14.10** — added immediate Stop cancellation for active AI requests and prevented cancelled requests from triggering provider failover
+- **v3.14.11** — completed the Gmail OAuth setup flow around the downloaded Desktop OAuth JSON, reopened Gmail setup when OAuth credentials are absent, and removed the broken Client-ID-only path
