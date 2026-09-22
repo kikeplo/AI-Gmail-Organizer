@@ -7,6 +7,7 @@ import io
 import json
 import os
 import shutil
+import threading
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -14,6 +15,10 @@ from urllib.request import Request, urlopen
 
 class LocalAIError(RuntimeError):
     pass
+
+
+class LocalAICancelled(LocalAIError):
+    """Raised when the user explicitly stops an active local AI request."""
 
 
 class LocalAIEngine:
@@ -35,6 +40,32 @@ class LocalAIEngine:
         self.base_url = os.getenv("LOCAL_AI_BASE_URL", self.DEFAULT_BASE_URL).strip().rstrip("/") or self.DEFAULT_BASE_URL
         self.model = os.getenv("LOCAL_AI_MODEL", self.DEFAULT_MODEL).strip() or self.DEFAULT_MODEL
         self.enabled = os.getenv("LOCAL_AI_ENABLED", "1").strip().lower() not in {"0", "false", "no", "off"}
+        self._cancel_event = threading.Event()
+        self._active_response = None
+        self._active_lock = threading.Lock()
+
+    def begin_operation(self) -> None:
+        """Reset cancellation state before a new top-level command begins."""
+        with self._active_lock:
+            self._cancel_event.clear()
+
+    def cancel(self) -> None:
+        """Cancel and close the currently active HTTP response, if any."""
+        self._cancel_event.set()
+        with self._active_lock:
+            response = self._active_response
+        if response is not None:
+            try:
+                response.close()
+            except Exception:
+                pass
+
+    def is_cancelled(self) -> bool:
+        return self._cancel_event.is_set()
+
+    def _check_cancelled(self) -> None:
+        if self._cancel_event.is_set():
+            raise LocalAICancelled("Local AI request stopped.")
 
     @property
     def ollama_executable(self) -> str | None:
@@ -273,21 +304,48 @@ class LocalAIEngine:
         return self.install_models(progress_callback=progress_callback)
 
     def _request(self, method: str, url: str, body: dict | None = None, timeout_seconds: float = 30) -> dict:
+        self._check_cancelled()
         data = json.dumps(body).encode("utf-8") if body is not None else None
         headers = {"Accept": "application/json"}
         if body is not None:
             headers["Content-Type"] = "application/json"
         request = Request(url, data=data, headers=headers, method=method)
+        response = None
         try:
-            with urlopen(request, timeout=timeout_seconds) as response:
-                raw = response.read().decode("utf-8")
-                return json.loads(raw) if raw else {}
+            response = urlopen(request, timeout=timeout_seconds)
+            with self._active_lock:
+                self._active_response = response
+            self._check_cancelled()
+            raw = response.read().decode("utf-8")
+            self._check_cancelled()
+            return json.loads(raw) if raw else {}
+        except LocalAICancelled:
+            raise
         except HTTPError as exc:
+            if self._cancel_event.is_set():
+                raise LocalAICancelled("Local AI request stopped.") from exc
             detail = exc.read().decode("utf-8", errors="replace")
             raise LocalAIError(f"Local AI HTTP {exc.code}: {detail}") from exc
         except URLError as exc:
+            if self._cancel_event.is_set():
+                raise LocalAICancelled("Local AI request stopped.") from exc
             raise LocalAIError(f"Local AI connection error: {exc.reason}") from exc
         except TimeoutError as exc:
+            if self._cancel_event.is_set():
+                raise LocalAICancelled("Local AI request stopped.") from exc
             raise LocalAIError(f"Local AI connection timeout: {exc}") from exc
+        except (OSError, ValueError) as exc:
+            if self._cancel_event.is_set():
+                raise LocalAICancelled("Local AI request stopped.") from exc
+            raise LocalAIError(f"Local AI connection failed: {exc}") from exc
         except json.JSONDecodeError as exc:
             raise LocalAIError("The local AI runtime returned invalid JSON.") from exc
+        finally:
+            with self._active_lock:
+                if response is self._active_response:
+                    self._active_response = None
+            if response is not None:
+                try:
+                    response.close()
+                except Exception:
+                    pass
