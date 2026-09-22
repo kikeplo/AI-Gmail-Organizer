@@ -251,6 +251,7 @@ class OverlayWindow(QMainWindow):
         if not command or self._thread is not None: return
         if self._needs_visual_access(command) and not self._request_visual_access(): return
         self._current_command = command
+        self._agent.begin_command()
         self._add_message("user",command); self.command_input.clear(); self.send_button.setEnabled(False); self.send_button.setText("Working…"); self.status.setText("● Working"); self.hint.setText("Working in the background. You can pause or stop a visual task at any time."); self.pause_button.setEnabled(True); self.stop_button.setEnabled(True)
         self._thread=QThread(self); self._worker=CommandWorker(self._agent,command); self._worker.moveToThread(self._thread); self._thread.started.connect(self._worker.run); self._worker.status.connect(self._on_worker_status); self._worker.finished.connect(self._on_worker_finished); self._worker.failed.connect(self._on_worker_failed); self._worker.finished.connect(self._thread.quit); self._worker.failed.connect(self._thread.quit); self._thread.finished.connect(self._cleanup_worker); self._thread.start()
     def _on_worker_status(self,message:str)->None: self.status.setText("● "+message); self.hint.setText(message)
@@ -260,7 +261,11 @@ class OverlayWindow(QMainWindow):
         else: self._agent.pause_task(); self.pause_button.setText("▶ Resume"); self.status.setText("● Paused"); self.hint.setText("Task paused. Resume when you are ready.")
     def _stop_task(self)->None:
         if self._thread is None: return
-        self._agent.stop_task(); self.stop_button.setEnabled(False); self.pause_button.setEnabled(False); self.status.setText("● Stopping…"); self.hint.setText("Stopping the current task…")
+        self._agent.stop_task()
+        self.stop_button.setEnabled(False)
+        self.pause_button.setEnabled(False)
+        self.status.setText("● Stopped")
+        self.hint.setText("The current request was cancelled.")
     def _on_worker_finished(self, response) -> None:
         command = getattr(self, "_current_command", "")
         is_ai_reply = response.mode == "local_ai" or response.mode.startswith("ai:")
@@ -272,6 +277,7 @@ class OverlayWindow(QMainWindow):
         self._set_ready_state()
 
     def _on_worker_failed(self,message:str)->None: self._add_message("assistant",f"The command could not be completed.\n\n{message}"); self._set_ready_state()
+    def _on_worker_cancelled(self)->None: self._add_message("assistant","Stopped."); self._set_ready_state()
     def _set_ready_state(self)->None: self.send_button.setEnabled(True); self.send_button.setText("Send"); self.status.setText("● Ready"); self.hint.setText("Gmail changes require confirmation. Desktop actions are performed on your local Windows session. Local memories stay on this device."); self.pause_button.setEnabled(False); self.stop_button.setEnabled(False); self.pause_button.setText("⏸ Pause")
     def _cleanup_worker(self)->None:
         if self._worker is not None: self._worker.deleteLater()
