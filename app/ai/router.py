@@ -172,8 +172,6 @@ class SmartAIRouter:
                 return RouterResponse(text, key, fallback, message)
             except (AICancelled, LocalAICancelled):
                 raise
-            except (AICancelled, LocalAICancelled):
-                raise
             except (AIProviderError, LocalAIError) as exc:
                 last_message = str(exc)
                 if self._is_quota_error(last_message) and key == "cloud":
@@ -190,6 +188,7 @@ class SmartAIRouter:
         if self._local_only():
             candidates = [key for key in candidates if key == "local"]
         for key in candidates:
+            self._check_cancelled()
             state = self.states[key]
             if not state.available:
                 continue
@@ -207,6 +206,8 @@ class SmartAIRouter:
                     result = self.local.vision_json(prompt, image)
                 self._success(key)
                 return result
+            except (AICancelled, LocalAICancelled):
+                raise
             except (AIProviderError, LocalAIError) as exc:
                 last_message = str(exc)
                 if self._is_quota_error(last_message) and key == "cloud":
