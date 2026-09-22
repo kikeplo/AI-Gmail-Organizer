@@ -55,12 +55,18 @@ class CommandAgent:
 
     def begin_command(self) -> None:
         self._cancel_event.clear()
+        begin = getattr(self.local_ai, "begin_operation", None)
+        if callable(begin):
+            begin()
         self.ai_router.begin_operation()
 
     def stop_task(self) -> None:
         self._running_task = False
         self._cancel_event.set()
         self.vision.stop()
+        cancel = getattr(self.local_ai, "cancel", None)
+        if callable(cancel):
+            cancel()
         self.ai_router.cancel()
 
     def is_cancelled(self) -> bool:
