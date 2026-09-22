@@ -142,6 +142,7 @@ class SmartAIRouter:
             local = self._call_local(prompt, system)
             if local is not None:
                 return local
+            self._check_cancelled()
             last_message = self.states["local"].last_error or last_message
 
         if self._is_complex_prompt(prompt):
@@ -151,6 +152,7 @@ class SmartAIRouter:
             candidates = self._ordered_candidates(skip_local=attempted_local)
 
         for key in candidates:
+            self._check_cancelled()
             state = self.states[key]
             if not state.available:
                 continue
