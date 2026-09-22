@@ -68,7 +68,9 @@ def main() -> int:
 
     config_file = config_dir / ".env"
     credentials_file = config_dir / "credentials.json"
-    if not config_file.exists() and not credentials_file.exists():
+    gmail_configured = bool(os.getenv("GMAIL_CLIENT_ID", "").strip()) or credentials_file.exists()
+
+    if not gmail_configured:
         from app.ui.setup_dialog import SetupDialog
         setup = SetupDialog()
         setup.setWindowModality(Qt.ApplicationModal)
