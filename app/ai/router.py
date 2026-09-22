@@ -227,12 +227,40 @@ class SmartAIRouter:
     def _call_local(self, prompt: str, system: str) -> RouterResponse | None:
         try:
             self.states["local"].requests += 1
-            local_system = (system or "You are the local AI assistant for AI Gmail Organizer.") + "\nIf you cannot reliably solve the request with your available knowledge, return exactly [ESCALATE] and nothing else. Do not pretend an external action occurred."
+            base_system = system or "You are the local AI assistant for AI Gmail Organizer."
+
+            # Local-only mode has nowhere to escalate. Do not give the model
+            # an escalation sentinel in this mode, because simple requests can
+            # otherwise produce [ESCALATE] and be incorrectly treated as a failure.
+            if self._local_only():
+                local_system = (
+                    base_system
+                    + "\nAnswer the user's request directly with the best answer you can. "
+                    "Do not output an escalation marker and do not claim external actions occurred."
+                )
+            else:
+                local_system = (
+                    base_system
+                    + "\nIf you cannot reliably solve the request with your available knowledge, "
+                    "return exactly [ESCALATE] and nothing else. Do not pretend an external action occurred."
+                )
+
             text = self.local.chat(prompt, local_system)
             if text.strip().upper().startswith("[ESCALATE]"):
-                self.states["local"].last_error = "Local AI requested cloud escalation."
-                self.states["local"].last_status = "escalated"
-                return None
+                if self._local_only():
+                    # A local model should still never trigger cloud routing
+                    # from Local-only mode. Preserve any useful text after a
+                    # malformed marker; otherwise ask it to answer directly.
+                    cleaned = re.sub(r"^\s*\[ESCALATE\]\s*", "", text, flags=re.IGNORECASE).strip()
+                    if cleaned:
+                        self._success("local")
+                        return RouterResponse(cleaned, "local", False, "Handled by the local AI for privacy and speed.")
+                    text = "I couldn't determine a reliable local answer."
+                else:
+                    self.states["local"].last_error = "Local AI requested cloud escalation."
+                    self.states["local"].last_status = "escalated"
+                    return None
+
             self._success("local")
             return RouterResponse(text, "local", False, "Handled by the local AI for privacy and speed.")
         except LocalAIError as exc:
