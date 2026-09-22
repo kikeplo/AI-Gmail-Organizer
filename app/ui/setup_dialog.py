@@ -9,14 +9,14 @@ from PySide6.QtGui import QIcon, QPixmap, QGuiApplication
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QFormLayout, QHBoxLayout,
     QLabel, QLineEdit, QMessageBox, QPushButton, QProgressBar, QScrollArea,
-    QToolButton, QVBoxLayout, QWidget,
+    QToolButton, QVBoxLayout, QWidget, QFileDialog,
 )
 
 from app.ai.local_engine import LocalAIEngine
 from app.ai.provider import AIProvider
 from app.config.user_settings import (
     read_config, save_api_key, save_backup_api_keys, save_base_url,
-    save_gmail_client_id, save_local_ai, save_model, save_provider_name,
+    install_google_credentials, save_local_ai, save_model, save_provider_name,
     save_routing_mode, save_feedback_escalation,
 )
 from app.gmail.client import GmailClient
@@ -88,7 +88,7 @@ class GoogleSetupDialog(QDialog):
             "<b>Step 2 — Create or select a project</b><br>A project such as <b>AI Gmail Organizer</b> is fine.<br><br>"
             "<b>Step 3 — Enable Gmail API</b><br>Open <b>APIs & Services → Library</b>, search for <b>Gmail API</b>, then click <b>Enable</b>.<br><br>"
             "<b>Step 4 — Create a Desktop OAuth client</b><br>Open <b>Google Auth Platform → Clients → Create client</b>, choose <b>Desktop app</b>, then create it.<br><br>"
-            "<b>Step 5 — Paste the Client ID</b><br>Copy the Client ID ending in <b>.apps.googleusercontent.com</b>. Do not paste a Client Secret."
+            "<b>Step 5 — Download the OAuth JSON</b><br>Download the credentials JSON from Google. The app will copy it into its private local configuration folder."
         )
         steps.setWordWrap(True)
         layout.addWidget(steps)
@@ -100,10 +100,18 @@ class GoogleSetupDialog(QDialog):
         buttons.addWidget(cloud)
         buttons.addWidget(auth)
         layout.addLayout(buttons)
-        layout.addWidget(QLabel("Google Client ID"))
-        self.client_id = QLineEdit(read_config().get("GMAIL_CLIENT_ID", ""))
-        self.client_id.setPlaceholderText("Paste your Desktop app Client ID here")
-        layout.addWidget(self.client_id)
+
+        self.selected_file = QLineEdit()
+        self.selected_file.setReadOnly(True)
+        self.selected_file.setPlaceholderText("No OAuth JSON selected")
+        select = QPushButton("Select OAuth JSON")
+        select.clicked.connect(self._select_json)
+        file_row = QHBoxLayout()
+        file_row.addWidget(self.selected_file, 1)
+        file_row.addWidget(select)
+        layout.addWidget(QLabel("Google OAuth credentials"))
+        layout.addLayout(file_row)
+
         row = QHBoxLayout()
         cancel = QPushButton("Cancel"); cancel.clicked.connect(self.reject)
         connect = QPushButton("Save & continue"); connect.clicked.connect(self._save)
@@ -116,15 +124,29 @@ class GoogleSetupDialog(QDialog):
         QPushButton { color:#F7F8FA; background:#2A3346; border:1px solid #46516A; border-radius:8px; padding:10px 14px; }
         """)
 
+    def _select_json(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Google OAuth credentials",
+            "",
+            "JSON files (*.json)",
+        )
+        if path:
+            self.selected_file.setText(path)
+
     def _save(self) -> None:
-        client_id = self.client_id.text().strip()
-        if not client_id:
-            QMessageBox.information(self, "Client ID needed", "Please paste the Desktop app Client ID first.")
+        source = self.selected_file.text().strip()
+        if not source:
+            QMessageBox.information(
+                self,
+                "OAuth file needed",
+                "Select the Desktop app OAuth JSON file you downloaded from Google first.",
+            )
             return
         try:
-            save_gmail_client_id(client_id)
-        except OSError as exc:
-            QMessageBox.critical(self, "Could not save", str(exc))
+            install_google_credentials(source)
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, "Could not save Google credentials", str(exc))
             return
         self.accept()
 
@@ -473,8 +495,8 @@ class SetupDialog(QDialog):
         except Exception as exc: self.capability_box.setText(f"Capabilities\nCould not determine capabilities: {exc}")
 
     def _connect_google(self) -> None:
-        config = read_config()
-        if not config.get("GMAIL_CLIENT_ID", "").strip():
+        credentials_file = GmailClient().credentials_file
+        if not credentials_file.exists():
             wizard = GoogleSetupDialog(self)
             if wizard.exec() != QDialog.Accepted: return
         self.google_status.setText("Opening Google sign-in in your browser…"); self._google_login = _GoogleLogin(); self._google_login.connected.connect(self._google_connected); self._google_login.failed.connect(self._google_failed); self._google_login.finished.connect(self._google_login.deleteLater); self._google_login.start()
