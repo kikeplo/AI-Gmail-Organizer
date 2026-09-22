@@ -11,7 +11,7 @@ import time
 from io import BytesIO
 from typing import Callable
 
-from app.ai.provider import AIProvider, AIProviderError
+from app.ai.provider import AIProvider, AIProviderError, AICancelled
 from app.ai.local_engine import LocalAIEngine, LocalAIError, LocalAICancelled
 
 
@@ -170,6 +170,10 @@ class SmartAIRouter:
                 fallback = attempted_local and key == "cloud"
                 message = "Local AI was unavailable or escalated, so Cloud AI handled this request." if fallback else self._human_provider_message(key)
                 return RouterResponse(text, key, fallback, message)
+            except (AICancelled, LocalAICancelled):
+                raise
+            except (AICancelled, LocalAICancelled):
+                raise
             except (AIProviderError, LocalAIError) as exc:
                 last_message = str(exc)
                 if self._is_quota_error(last_message) and key == "cloud":
