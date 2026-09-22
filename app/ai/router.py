@@ -12,7 +12,7 @@ from io import BytesIO
 from typing import Callable
 
 from app.ai.provider import AIProvider, AIProviderError
-from app.ai.local_engine import LocalAIEngine, LocalAIError
+from app.ai.local_engine import LocalAIEngine, LocalAIError, LocalAICancelled
 
 
 @dataclass
@@ -54,6 +54,31 @@ class SmartAIRouter:
         self.cooldown_default = max(15, int(os.getenv("AI_QUOTA_COOLDOWN_SECONDS", "60")))
         self.states = {"cloud": ProviderState("Cloud AI"), "local": ProviderState("Local AI")}
 
+    def begin_operation(self) -> None:
+        """Reset cancellation state for a new top-level assistant command."""
+        begin = getattr(self.local, "begin_operation", None)
+        if callable(begin):
+            begin()
+        begin = getattr(self.cloud, "begin_operation", None)
+        if callable(begin):
+            begin()
+
+    def cancel(self) -> None:
+        """Interrupt active local/cloud provider requests immediately."""
+        cancel = getattr(self.local, "cancel", None)
+        if callable(cancel):
+            cancel()
+        cancel = getattr(self.cloud, "cancel", None)
+        if callable(cancel):
+            cancel()
+
+    def is_cancelled(self) -> bool:
+        return bool(
+            getattr(self.local, "is_cancelled", lambda: False)()
+            or getattr(self.cloud, "is_cancelled", lambda: False)()
+        )
+
+
     def _routing_mode(self) -> str:
         """Read routing mode at request time so saved Settings take effect without restarting the app."""
         mode = os.getenv("AI_ROUTING_MODE", self.preference).strip().lower() or self.preference
@@ -90,6 +115,7 @@ class SmartAIRouter:
 
     def chat(self, prompt: str, system: str = "") -> RouterResponse:
         """Run through local AI first when selected; Local-only never contacts cloud AI."""
+        self._check_cancelled()
         last_message = "No configured AI provider is available."
         attempted_local = False
         local_only = self._local_only()
@@ -102,6 +128,7 @@ class SmartAIRouter:
             local = self._call_local(prompt, system)
             if local is not None:
                 return local
+            self._check_cancelled()
             last_message = self.states["local"].last_error or last_message
             if not last_message:
                 try:
@@ -263,9 +290,17 @@ class SmartAIRouter:
 
             self._success("local")
             return RouterResponse(text, "local", False, "Handled by the local AI for privacy and speed.")
+        except LocalAICancelled:
+            self.states["local"].last_status = "cancelled"
+            self.states["local"].last_error = "Local AI request stopped."
+            return None
         except LocalAIError as exc:
             self._record_failure("local", str(exc))
             return None
+
+    def _check_cancelled(self) -> None:
+        if self.is_cancelled():
+            raise AIProviderError("AI request stopped by user.")
 
     def _ordered_candidates(self, *, skip_local: bool = False) -> list[str]:
         configured = set(self.configured_providers())
